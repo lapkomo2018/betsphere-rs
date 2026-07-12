@@ -1,0 +1,10 @@
+[package]
+name = "infrastructure"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+domain = { workspace = true }
+
+async-trait = { workspace = true }
+tokio = { workspace = true }
