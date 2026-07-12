@@ -1,8 +1,12 @@
+mod auth;
+mod cors;
 mod database;
 mod env;
 mod error;
 mod server;
 
+pub use auth::AuthConfig;
+pub use cors::CorsConfig;
 pub use database::DatabaseConfig;
 pub use error::ConfigError;
 pub use server::ServerConfig;
@@ -11,8 +15,9 @@ pub use server::ServerConfig;
 #[derive(Debug, Clone)]
 pub struct Config {
     pub server: ServerConfig,
-    #[allow(dead_code)] // read once the Postgres adapter lands
     pub database: DatabaseConfig,
+    pub auth: AuthConfig,
+    pub cors: CorsConfig,
 }
 
 impl Config {
@@ -23,6 +28,8 @@ impl Config {
         Ok(Self {
             server: ServerConfig::from_env()?,
             database: DatabaseConfig::from_env()?,
+            auth: AuthConfig::from_env()?,
+            cors: CorsConfig::from_env()?,
         })
     }
 }

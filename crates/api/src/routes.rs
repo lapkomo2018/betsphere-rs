@@ -1,24 +1,48 @@
+mod auth;
 mod health;
 mod users;
 
 use axum::Router;
-use utoipa::OpenApi;
+use utoipa::openapi::security::{HttpAuthScheme, HttpBuilder, SecurityScheme};
+use utoipa::{Modify, OpenApi};
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_swagger_ui::SwaggerUi;
 
 use crate::state::AppState;
 
 #[derive(OpenApi)]
-#[openapi(info(
-    title = "Betsphere API",
-    description = "Betting platform backend",
-    version = env!("CARGO_PKG_VERSION"),
-))]
+#[openapi(
+    info(
+        title = "Betsphere API",
+        description = "Betting platform backend",
+        version = env!("CARGO_PKG_VERSION"),
+    ),
+    modifiers(&SecurityAddon)
+)]
 struct ApiDoc;
+
+/// Registers the `bearer_auth` scheme referenced by protected endpoints.
+struct SecurityAddon;
+
+impl Modify for SecurityAddon {
+    fn modify(&self, openapi: &mut utoipa::openapi::OpenApi) {
+        let components = openapi.components.get_or_insert_with(Default::default);
+        components.add_security_scheme(
+            "bearer_auth",
+            SecurityScheme::Http(
+                HttpBuilder::new()
+                    .scheme(HttpAuthScheme::Bearer)
+                    .bearer_format("JWT")
+                    .build(),
+            ),
+        );
+    }
+}
 
 pub fn router(state: AppState) -> Router {
     let (router, openapi) = OpenApiRouter::with_openapi(ApiDoc::openapi())
         .merge(health::router())
+        .nest("/api/auth", auth::router())
         .nest("/api/users", users::router())
         .split_for_parts();
 

@@ -2,12 +2,16 @@
 
 mod config;
 mod error;
+mod extract;
 mod routes;
 mod state;
 
 use std::sync::Arc;
 
-use infrastructure::persistence::in_memory::InMemoryUserRepository;
+use infrastructure::auth::{Argon2PasswordHasher, JwtAccessTokens};
+use infrastructure::persistence::postgres::{
+    connect, run_migrations, PgRefreshTokenRepository, PgUnitOfWork, PgUserRepository,
+};
 use tracing_subscriber::EnvFilter;
 
 use crate::config::Config;
@@ -23,10 +27,33 @@ async fn main() {
 
     let config = Config::from_env().expect("invalid configuration");
 
-    let user_repository = Arc::new(InMemoryUserRepository::new());
-    let state = AppState::new(user_repository);
+    let pool = connect(&config.database.url())
+        .await
+        .expect("failed to connect to Postgres");
+    run_migrations(&pool).await.expect("migrations failed");
+    tracing::info!("database migrations are up to date");
 
-    let app = routes::router(state);
+    let users = Arc::new(PgUserRepository::new(pool.clone()));
+    let refresh_tokens = Arc::new(PgRefreshTokenRepository::new(pool.clone()));
+    let uow = Arc::new(PgUnitOfWork::new(pool));
+    let hasher = Arc::new(Argon2PasswordHasher::new());
+    let access_tokens = Arc::new(JwtAccessTokens::new(
+        &config.auth.jwt_secret,
+        config.auth.access_ttl,
+    ));
+
+    let state = AppState::new(
+        users,
+        refresh_tokens,
+        uow,
+        hasher,
+        access_tokens,
+        config.auth.refresh_ttl,
+        config.auth.cookie_secure,
+    );
+
+    let cors = config.cors.layer().expect("invalid CORS configuration");
+    let app = routes::router(state).layer(cors);
 
     let listener = tokio::net::TcpListener::bind(config.server.bind_addr)
         .await

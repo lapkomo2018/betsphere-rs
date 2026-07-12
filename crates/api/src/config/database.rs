@@ -26,7 +26,6 @@ impl DatabaseConfig {
 
     /// Connection string assembled from the parts, unless DATABASE_URL was
     /// set explicitly (useful for managed hosting that hands out one URL).
-    #[allow(dead_code)] // used once the Postgres adapter lands
     pub fn url(&self) -> String {
         match &self.url_override {
             Some(url) => url.clone(),

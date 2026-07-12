@@ -1,5 +1,5 @@
 use axum::Json;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
 

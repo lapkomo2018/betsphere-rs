@@ -39,6 +39,12 @@ make check   # fmt check + clippy + tests (what CI would run)
 Configuration is read from the environment (and `.env` if present) into a typed
 `Config` struct at startup — see `.env.example` for available variables.
 
+The database schema lives in `migrations/` (plain SQL, sqlx format). The files
+are embedded into the binary at compile time and applied automatically on
+startup, so a fresh database needs no manual steps. To add a migration, drop a
+new `NNNN_description.sql` file in `migrations/` — applied ones are tracked in
+the `_sqlx_migrations` table and never re-run.
+
 Dev runs only Postgres in Docker (`docker-compose.yml`) while the app runs
 natively for the fastest feedback loop. Prod (`make prod-up`,
 `docker-compose.prod.yml`) runs the full stack: the API is compiled as a
@@ -47,14 +53,23 @@ no host port, and both services restart automatically.
 
 ## API
 
-| Method | Path             | Description                          |
-|--------|------------------|--------------------------------------|
-| GET    | `/health`        | Liveness check                       |
-| POST   | `/api/users`     | Create user `{username, email}`      |
-| GET    | `/api/users`     | List users                           |
-| GET    | `/api/users/{id}`| Get user by UUID                     |
+| Method | Path                 | Description                                              |
+|--------|----------------------|----------------------------------------------------------|
+| GET    | `/health`            | Liveness check                                           |
+| POST   | `/api/auth/register` | Register `{username, email, password}` → tokens          |
+| POST   | `/api/auth/login`    | Login `{email, password}` → access token + refresh cookie |
+| POST   | `/api/auth/refresh`  | Rotate the refresh cookie, get a new access token        |
+| POST   | `/api/auth/logout`   | Invalidate the refresh token                             |
+| GET    | `/api/users/me`      | Current user (requires `Authorization: Bearer <token>`)  |
+| GET    | `/api/users/{id}`    | Public profile (no email/balance)                        |
 
-Errors return `{"error": "..."}` with 422 (validation), 404 (not found), 409 (conflict), or 500.
+Auth follows the access/refresh JWT scheme: the short-lived access token is
+returned in the response body, the long-lived refresh token travels in an
+httpOnly cookie scoped to `/api/auth` and is rotated on every refresh.
+Passwords are hashed with Argon2id; refresh tokens are stored hashed (SHA-256).
+
+Errors return `{"error": "..."}` with 401 (unauthorized), 404 (not found),
+409 (conflict), 422 (validation), or 500.
 
 Interactive docs: **`/docs`** (OpenAPI spec at `/api-docs/openapi.json`),
 generated from the handler annotations in `routes/` via utoipa.

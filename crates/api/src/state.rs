@@ -1,22 +1,50 @@
 use std::sync::Arc;
 
-use application::use_cases::user::{CreateUser, GetUser, ListUsers};
-use domain::repositories::UserRepository;
+use application::ports::{AccessTokenService, PasswordHasher};
+use application::use_cases::auth::{Login, Logout, RefreshSession, Register, SessionIssuer};
+use application::use_cases::user::GetUser;
+use chrono::Duration;
+use domain::repositories::{RefreshTokenRepository, UnitOfWork, UserRepository};
 
 /// Shared handler state holding the wired-up use cases.
 #[derive(Clone)]
 pub struct AppState {
-    pub create_user: Arc<CreateUser>,
+    pub register: Arc<Register>,
+    pub login: Arc<Login>,
+    pub refresh_session: Arc<RefreshSession>,
+    pub logout: Arc<Logout>,
     pub get_user: Arc<GetUser>,
-    pub list_users: Arc<ListUsers>,
+    /// Used by the auth extractor to verify bearer tokens.
+    pub access_tokens: Arc<dyn AccessTokenService>,
+    /// Whether the refresh cookie carries the `Secure` flag.
+    pub cookie_secure: bool,
 }
 
 impl AppState {
-    pub fn new(users: Arc<dyn UserRepository>) -> Self {
+    pub fn new(
+        users: Arc<dyn UserRepository>,
+        refresh_tokens: Arc<dyn RefreshTokenRepository>,
+        uow: Arc<dyn UnitOfWork>,
+        hasher: Arc<dyn PasswordHasher>,
+        access_tokens: Arc<dyn AccessTokenService>,
+        refresh_ttl: Duration,
+        cookie_secure: bool,
+    ) -> Self {
+        let sessions = Arc::new(SessionIssuer::new(access_tokens.clone(), refresh_ttl));
+
         Self {
-            create_user: Arc::new(CreateUser::new(users.clone())),
-            get_user: Arc::new(GetUser::new(users.clone())),
-            list_users: Arc::new(ListUsers::new(users)),
+            register: Arc::new(Register::new(uow.clone(), hasher.clone(), sessions.clone())),
+            login: Arc::new(Login::new(
+                users.clone(),
+                refresh_tokens.clone(),
+                hasher,
+                sessions.clone(),
+            )),
+            refresh_session: Arc::new(RefreshSession::new(uow, sessions)),
+            logout: Arc::new(Logout::new(refresh_tokens)),
+            get_user: Arc::new(GetUser::new(users)),
+            access_tokens,
+            cookie_secure,
         }
     }
 }

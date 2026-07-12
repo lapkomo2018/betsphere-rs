@@ -5,7 +5,7 @@ use tokio::sync::RwLock;
 
 use domain::entities::{User, UserId};
 use domain::repositories::{RepositoryError, UserRepository};
-use domain::value_objects::user::Email;
+use domain::value_objects::user::{Email, Username};
 
 /// Thread-safe in-memory user store. Useful for development and tests.
 #[derive(Default)]
@@ -40,6 +40,16 @@ impl UserRepository for InMemoryUserRepository {
             .cloned())
     }
 
+    async fn find_by_username(&self, username: &Username) -> Result<Option<User>, RepositoryError> {
+        Ok(self
+            .users
+            .read()
+            .await
+            .values()
+            .find(|u| u.username() == username)
+            .cloned())
+    }
+
     async fn list(&self) -> Result<Vec<User>, RepositoryError> {
         let mut users: Vec<User> = self.users.read().await.values().cloned().collect();
         users.sort_by_key(|u| u.created_at());
@@ -50,12 +60,13 @@ impl UserRepository for InMemoryUserRepository {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use domain::value_objects::user::Username;
+    use domain::value_objects::user::PasswordHash;
 
     fn sample_user() -> User {
         User::new(
             Username::new("alice").unwrap(),
             Email::new("alice@example.com").unwrap(),
+            PasswordHash::new("$argon2id$fake"),
         )
     }
 
@@ -70,13 +81,18 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn finds_by_email() {
+    async fn finds_by_email_and_username() {
         let repo = InMemoryUserRepository::new();
         let user = sample_user();
         repo.save(&user).await.unwrap();
 
-        let found = repo.find_by_email(user.email()).await.unwrap();
-        assert!(found.is_some());
+        assert!(repo.find_by_email(user.email()).await.unwrap().is_some());
+        assert!(
+            repo.find_by_username(user.username())
+                .await
+                .unwrap()
+                .is_some()
+        );
     }
 
     #[tokio::test]
