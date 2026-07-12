@@ -13,7 +13,7 @@ crates/
 ├── application/      # Use cases orchestrating domain objects
 │   └── use_cases/        # Grouped by entity: user/{create,get,list}_user.rs
 ├── infrastructure/   # Adapters implementing domain ports
-│   └── persistence/      # Grouped by backend: in_memory/, postgres/ (later)
+│   └── persistence/      # Grouped by backend: in_memory/, postgres/, redis/
 └── api/              # Delivery mechanism (axum) + composition root
     ├── main.rs           # Wires repositories into use cases, starts server
     ├── config.rs         # Typed env configuration (loads .env via dotenvy)
@@ -45,11 +45,16 @@ startup, so a fresh database needs no manual steps. To add a migration, drop a
 new `NNNN_description.sql` file in `migrations/` — applied ones are tracked in
 the `_sqlx_migrations` table and never re-run.
 
-Dev runs only Postgres in Docker (`docker-compose.yml`) while the app runs
-natively for the fastest feedback loop. Prod (`make prod-up`,
-`docker-compose.prod.yml`) runs the full stack: the API is compiled as a
-release binary in a multi-stage image (`Dockerfile`), the database publishes
-no host port, and both services restart automatically.
+Dev runs only the infrastructure (Postgres + Redis) in Docker
+(`docker-compose.yml`) while the app runs natively for the fastest feedback
+loop. Prod (`make prod-up`, `docker-compose.prod.yml`) runs the full stack:
+the API is compiled as a release binary in a multi-stage image (`Dockerfile`),
+the database and cache publish no host ports, and all services restart
+automatically.
+
+User lookups go through a Redis read-through cache (`CachedUserRepository`)
+in front of Postgres. Entries expire after `CACHE_TTL_SECS` and the cache
+fails open: if Redis is down, reads fall through to Postgres.
 
 ## API
 

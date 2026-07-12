@@ -38,6 +38,12 @@ sqlx = { version = "0.8", default-features = false, features = [
     "macros",
 ] }
 
+# Cache
+redis = { version = "0.32", default-features = false, features = [
+    "tokio-comp",
+    "connection-manager",
+] }
+
 # Auth / crypto
 argon2 = "0.5"
 jsonwebtoken = "9"

@@ -10,8 +10,9 @@ use std::sync::Arc;
 
 use infrastructure::auth::{Argon2PasswordHasher, JwtAccessTokens};
 use infrastructure::persistence::postgres::{
-    connect, run_migrations, PgRefreshTokenRepository, PgUnitOfWork, PgUserRepository,
+    self, run_migrations, PgRefreshTokenRepository, PgUnitOfWork, PgUserRepository,
 };
+use infrastructure::persistence::redis::{self, CachedUserRepository};
 use tower_http::trace::{DefaultOnResponse, TraceLayer};
 use tower_http::LatencyUnit;
 use tracing::Level;
@@ -30,13 +31,22 @@ async fn main() {
 
     let config = Config::from_env().expect("invalid configuration");
 
-    let pool = connect(&config.database.url())
+    let pool = postgres::connect(&config.database.url())
         .await
         .expect("failed to connect to Postgres");
     run_migrations(&pool).await.expect("migrations failed");
     tracing::info!("database migrations are up to date");
 
-    let users = Arc::new(PgUserRepository::new(pool.clone()));
+    let cache = redis::connect(&config.redis.url())
+        .await
+        .expect("failed to connect to Redis");
+    tracing::info!("connected to Redis");
+
+    let users = Arc::new(CachedUserRepository::new(
+        Arc::new(PgUserRepository::new(pool.clone())),
+        cache,
+        config.redis.cache_ttl,
+    ));
     let refresh_tokens = Arc::new(PgRefreshTokenRepository::new(pool.clone()));
     let uow = Arc::new(PgUnitOfWork::new(pool));
     let hasher = Arc::new(Argon2PasswordHasher::new());

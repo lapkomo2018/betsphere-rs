@@ -17,6 +17,16 @@ services:
       retries: 10
     restart: unless-stopped
 
+  redis:
+    image: redis:8-alpine
+    # No published port: the cache is reachable only from the compose network.
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
   api:
     build:
       context: .
@@ -28,10 +38,14 @@ services:
       BIND_ADDR: 0.0.0.0:8080
       POSTGRES_HOST: postgres
       POSTGRES_PORT: "5432" # in-network port, regardless of published POSTGRES_PORT
+      REDIS_HOST: redis
+      REDIS_PORT: "6379" # in-network port, regardless of published REDIS_PORT
     ports:
       - "${API_PORT}:8080"
     depends_on:
       postgres:
+        condition: service_healthy
+      redis:
         condition: service_healthy
     restart: unless-stopped
 
