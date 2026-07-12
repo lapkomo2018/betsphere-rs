@@ -12,6 +12,9 @@ use infrastructure::auth::{Argon2PasswordHasher, JwtAccessTokens};
 use infrastructure::persistence::postgres::{
     connect, run_migrations, PgRefreshTokenRepository, PgUnitOfWork, PgUserRepository,
 };
+use tower_http::trace::{DefaultOnResponse, TraceLayer};
+use tower_http::LatencyUnit;
+use tracing::Level;
 use tracing_subscriber::EnvFilter;
 
 use crate::config::Config;
@@ -53,7 +56,20 @@ async fn main() {
     );
 
     let cors = config.cors.layer().expect("invalid CORS configuration");
-    let app = routes::router(state).layer(cors);
+    let trace = TraceLayer::new_for_http()
+        .make_span_with(|request: &axum::http::Request<_>| {
+            tracing::info_span!(
+                "request",
+                method = %request.method(),
+                uri = %request.uri(),
+            )
+        })
+        .on_response(
+            DefaultOnResponse::new()
+                .level(Level::INFO)
+                .latency_unit(LatencyUnit::Millis),
+        );
+    let app = routes::router(state).layer(cors).layer(trace);
 
     let listener = tokio::net::TcpListener::bind(config.server.bind_addr)
         .await
