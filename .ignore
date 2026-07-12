@@ -1,0 +1,12 @@
+# Ignore JetBrains IDE settings
+.idea/
+
+# Ignore Git files
+.git/
+
+# Ignore build artifacts (if cargo watch loops on target changes)
+target/
+
+# Ignore OS-specific files
+.DS_Store
+Thumbs.db
