@@ -1,8 +1,8 @@
-use domain::repositories::RepositoryError;
 use domain::DomainError;
+use domain::repositories::RepositoryError;
 use thiserror::Error;
 
-use crate::ports::AuthPortError;
+use crate::ports::{AuthPortError, StoragePortError};
 
 #[derive(Debug, Error)]
 pub enum ApplicationError {
@@ -37,5 +37,13 @@ impl From<AuthPortError> for ApplicationError {
             AuthPortError::InvalidToken => Self::Unauthorized("invalid token".into()),
             AuthPortError::Internal(msg) => Self::Internal(msg),
         }
+    }
+}
+
+impl From<StoragePortError> for ApplicationError {
+    fn from(err: StoragePortError) -> Self {
+        // Use cases only pass internally-built keys to writes, so an invalid
+        // key is a bug, not user error.
+        Self::Internal(err.to_string())
     }
 }

@@ -12,7 +12,7 @@ use utoipa_axum::routes;
 
 use crate::error::{ApiError, ErrorResponse};
 use crate::routes::users::PrivateUserResponse;
-use crate::state::AppState;
+use crate::state::{AppState, AuthState};
 
 /// Cookie carrying the refresh token. Scoped to the auth endpoints so the
 /// browser never sends it anywhere else.
@@ -98,7 +98,7 @@ fn removal_cookie() -> Cookie<'static> {
     )
 )]
 async fn register(
-    State(state): State<AppState>,
+    State(state): State<AuthState>,
     jar: CookieJar,
     Json(body): Json<RegisterRequest>,
 ) -> Result<(StatusCode, CookieJar, Json<AuthResponse>), ApiError> {
@@ -126,7 +126,7 @@ async fn register(
     )
 )]
 async fn login(
-    State(state): State<AppState>,
+    State(state): State<AuthState>,
     jar: CookieJar,
     Json(body): Json<LoginRequest>,
 ) -> Result<(CookieJar, Json<AuthResponse>), ApiError> {
@@ -152,7 +152,7 @@ async fn login(
     )
 )]
 async fn refresh(
-    State(state): State<AppState>,
+    State(state): State<AuthState>,
     jar: CookieJar,
 ) -> Result<(CookieJar, Json<AuthResponse>), ApiError> {
     let token = jar
@@ -173,7 +173,7 @@ async fn refresh(
     responses((status = 204, description = "Refresh token invalidated"))
 )]
 async fn logout(
-    State(state): State<AppState>,
+    State(state): State<AuthState>,
     jar: CookieJar,
 ) -> Result<(StatusCode, CookieJar), ApiError> {
     if let Some(cookie) = jar.get(REFRESH_COOKIE) {

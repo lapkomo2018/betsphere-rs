@@ -5,21 +5,24 @@ mod error;
 mod extract;
 mod routes;
 mod state;
+#[cfg(test)]
+mod tests;
 
 use std::sync::Arc;
 
 use infrastructure::auth::{Argon2PasswordHasher, JwtAccessTokens};
 use infrastructure::persistence::postgres::{
-    self, run_migrations, PgRefreshTokenRepository, PgUnitOfWork, PgUserRepository,
+    self, PgRefreshTokenRepository, PgUnitOfWork, PgUserRepository, run_migrations,
 };
 use infrastructure::persistence::redis::{self, CachedUserRepository};
-use tower_http::trace::{DefaultOnResponse, TraceLayer};
+use infrastructure::storage::LocalFileStorage;
 use tower_http::LatencyUnit;
+use tower_http::trace::{DefaultOnResponse, TraceLayer};
 use tracing::Level;
 use tracing_subscriber::EnvFilter;
 
 use crate::config::Config;
-use crate::state::AppState;
+use crate::state::{AppState, AuthState, FileState, UserState};
 
 #[tokio::main]
 async fn main() {
@@ -54,16 +57,24 @@ async fn main() {
         &config.auth.jwt_secret,
         config.auth.access_ttl,
     ));
+    let storage = Arc::new(LocalFileStorage::new(
+        config.storage.root.clone(),
+        format!("{}{}", config.server.app_url, routes::FILES_PUBLIC_BASE),
+    ));
 
-    let state = AppState::new(
-        users,
-        refresh_tokens,
-        uow,
-        hasher,
-        access_tokens,
-        config.auth.refresh_ttl,
-        config.auth.cookie_secure,
-    );
+    let state = AppState {
+        auth: AuthState::new(
+            users.clone(),
+            refresh_tokens,
+            uow,
+            hasher,
+            access_tokens,
+            config.auth.refresh_ttl,
+            config.auth.cookie_secure,
+        ),
+        users: UserState::new(users, storage.clone()),
+        files: FileState::new(storage),
+    };
 
     let cors = config.cors.layer().expect("invalid CORS configuration");
     let trace = TraceLayer::new_for_http()

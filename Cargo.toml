@@ -22,7 +22,7 @@ tokio = { version = "1", features = ["full"] }
 async-trait = "0.1"
 
 # Web
-axum = "0.8"
+axum = { version = "0.8", features = ["macros", "multipart"] }
 axum-extra = { version = "0.10", features = ["cookie"] }
 tower-http = { version = "0.6", features = ["cors", "trace"] }
 time = "0.3"
@@ -68,6 +68,9 @@ thiserror = "2"
 
 # Config
 dotenvy = "0.15"
+
+# Testing
+tower = { version = "0.5", features = ["util"] }
 
 # Observability
 tracing = "0.1"

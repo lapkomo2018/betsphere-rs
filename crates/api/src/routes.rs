@@ -1,6 +1,9 @@
 mod auth;
+mod files;
 mod health;
 mod users;
+
+pub use files::PUBLIC_BASE as FILES_PUBLIC_BASE;
 
 use axum::Router;
 use utoipa::openapi::security::{HttpAuthScheme, HttpBuilder, SecurityScheme};
@@ -44,6 +47,7 @@ pub fn router(state: AppState) -> Router {
         .merge(health::router())
         .nest("/api/auth", auth::router())
         .nest("/api/users", users::router())
+        .nest(files::PUBLIC_BASE, files::router())
         .split_for_parts();
 
     router

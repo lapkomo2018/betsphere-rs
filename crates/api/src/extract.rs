@@ -34,6 +34,7 @@ impl FromRequestParts<AppState> for CurrentUser {
             .ok_or_else(unauthorized)?;
 
         let claims = state
+            .auth
             .access_tokens
             .verify(token)
             .map_err(ApplicationError::from)?;

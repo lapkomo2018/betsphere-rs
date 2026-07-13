@@ -5,6 +5,7 @@ mod env;
 mod error;
 mod redis;
 mod server;
+mod storage;
 
 pub use auth::AuthConfig;
 pub use cors::CorsConfig;
@@ -12,6 +13,7 @@ pub use database::DatabaseConfig;
 pub use error::ConfigError;
 pub use redis::RedisConfig;
 pub use server::ServerConfig;
+pub use storage::StorageConfig;
 
 /// Typed application configuration, loaded once at startup.
 #[derive(Debug, Clone)]
@@ -21,6 +23,7 @@ pub struct Config {
     pub redis: RedisConfig,
     pub auth: AuthConfig,
     pub cors: CorsConfig,
+    pub storage: StorageConfig,
 }
 
 impl Config {
@@ -34,6 +37,7 @@ impl Config {
             redis: RedisConfig::from_env()?,
             auth: AuthConfig::from_env()?,
             cors: CorsConfig::from_env()?,
+            storage: StorageConfig::from_env()?,
         })
     }
 }

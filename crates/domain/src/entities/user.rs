@@ -154,6 +154,11 @@ impl User {
         self.avatar_url.as_deref()
     }
 
+    pub fn set_avatar_url(&mut self, avatar_url: Option<String>) {
+        self.avatar_url = avatar_url;
+        self.updated_at = Utc::now();
+    }
+
     pub fn balance(&self) -> i64 {
         self.balance
     }

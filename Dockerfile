@@ -14,7 +14,11 @@ FROM debian:bookworm-slim AS runtime
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates \
     && rm -rf /var/lib/apt/lists/* \
-    && useradd --system --uid 10001 --no-create-home appuser
+    && useradd --system --uid 10001 --no-create-home appuser \
+    # Uploaded-files dir (STORAGE_ROOT): must exist owned by appuser so the \
+    # named volume mounted here inherits that ownership on first use.
+    && mkdir -p /data/storage \
+    && chown appuser /data/storage
 COPY --from=builder /usr/local/bin/betsphere /usr/local/bin/betsphere
 USER appuser
 EXPOSE 8080

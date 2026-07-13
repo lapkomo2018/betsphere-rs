@@ -40,8 +40,12 @@ services:
       POSTGRES_PORT: "5432" # in-network port, regardless of published POSTGRES_PORT
       REDIS_HOST: redis
       REDIS_PORT: "6379" # in-network port, regardless of published REDIS_PORT
+      STORAGE_ROOT: /data/storage # pre-created in the image, backed by the volume below
     ports:
       - "${API_PORT}:8080"
+    volumes:
+      # Uploaded files (avatars) must survive container recreation.
+      - storage_data:/data/storage
     depends_on:
       postgres:
         condition: service_healthy
@@ -51,3 +55,4 @@ services:
 
 volumes:
   postgres_data:
+  storage_data:

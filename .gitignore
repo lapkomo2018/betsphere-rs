@@ -1,3 +1,5 @@
 /target
 .env
 .idea/
+# Uploaded files (local disk storage)
+/storage
