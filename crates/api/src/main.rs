@@ -12,7 +12,8 @@ use std::sync::Arc;
 
 use infrastructure::auth::{Argon2PasswordHasher, JwtAccessTokens};
 use infrastructure::persistence::postgres::{
-    self, PgRefreshTokenRepository, PgUnitOfWork, PgUserRepository, run_migrations,
+    self, PgChatMessageRepository, PgRefreshTokenRepository, PgUnitOfWork, PgUserRepository,
+    run_migrations,
 };
 use infrastructure::persistence::redis::{self, CachedUserRepository};
 use infrastructure::storage::LocalFileStorage;
@@ -22,7 +23,7 @@ use tracing::Level;
 use tracing_subscriber::EnvFilter;
 
 use crate::config::Config;
-use crate::state::{AppState, AuthState, FileState, UserState};
+use crate::state::{AppState, AuthState, ChatState, FileState, UserState};
 
 #[tokio::main]
 async fn main() {
@@ -51,6 +52,7 @@ async fn main() {
         config.redis.cache_ttl,
     ));
     let refresh_tokens = Arc::new(PgRefreshTokenRepository::new(pool.clone()));
+    let chat_messages = Arc::new(PgChatMessageRepository::new(pool.clone()));
     let uow = Arc::new(PgUnitOfWork::new(pool));
     let hasher = Arc::new(Argon2PasswordHasher::new());
     let access_tokens = Arc::new(JwtAccessTokens::new(
@@ -68,12 +70,13 @@ async fn main() {
             refresh_tokens,
             uow,
             hasher,
-            access_tokens,
+            access_tokens.clone(),
             config.auth.refresh_ttl,
             config.auth.cookie_secure,
         ),
-        users: UserState::new(users, storage.clone()),
+        users: UserState::new(users.clone(), storage.clone()),
         files: FileState::new(storage),
+        chat: ChatState::new(chat_messages, users, access_tokens),
     };
 
     let cors = config.cors.layer().expect("invalid CORS configuration");

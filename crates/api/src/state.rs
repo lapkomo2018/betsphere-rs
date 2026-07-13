@@ -5,12 +5,14 @@
 //! instead of growing one flat struct.
 
 mod auth;
+mod chat;
 mod file;
 mod user;
 
 use axum::extract::FromRef;
 
 pub use auth::AuthState;
+pub use chat::{ChatState, HISTORY_LIMIT};
 pub use file::FileState;
 pub use user::UserState;
 
@@ -20,4 +22,5 @@ pub struct AppState {
     pub auth: AuthState,
     pub users: UserState,
     pub files: FileState,
+    pub chat: ChatState,
 }

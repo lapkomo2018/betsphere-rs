@@ -8,23 +8,30 @@ use axum::http::{Request, StatusCode, header};
 use chrono::Duration;
 use infrastructure::auth::{Argon2PasswordHasher, JwtAccessTokens};
 use infrastructure::persistence::in_memory::{
-    InMemoryRefreshTokenRepository, InMemoryUnitOfWork, InMemoryUserRepository,
+    InMemoryChatMessageRepository, InMemoryRefreshTokenRepository, InMemoryUnitOfWork,
+    InMemoryUserRepository,
 };
 use infrastructure::storage::LocalFileStorage;
+use futures_util::{SinkExt, StreamExt};
+use std::net::SocketAddr;
+use tokio_tungstenite::connect_async;
+use tokio_tungstenite::tungstenite::Message as WsMessage;
 use tower::ServiceExt;
 
 use crate::routes;
-use crate::state::{AppState, AuthState, FileState, UserState};
+use crate::state::{AppState, AuthState, ChatState, FileState, UserState};
 
 const APP_URL: &str = "http://localhost:8080";
 
 fn test_app() -> Router {
     let users = Arc::new(InMemoryUserRepository::new());
     let refresh_tokens = Arc::new(InMemoryRefreshTokenRepository::new());
+    let chat_messages = Arc::new(InMemoryChatMessageRepository::new());
     let uow = Arc::new(InMemoryUnitOfWork::new(
         users.clone(),
         refresh_tokens.clone(),
     ));
+    let access_tokens = Arc::new(JwtAccessTokens::new("test-secret", Duration::minutes(5)));
     let storage_dir =
         std::env::temp_dir().join(format!("betsphere-api-test-{}", uuid::Uuid::new_v4()));
     let storage = Arc::new(LocalFileStorage::new(
@@ -37,12 +44,13 @@ fn test_app() -> Router {
             refresh_tokens,
             uow,
             Arc::new(Argon2PasswordHasher::new()),
-            Arc::new(JwtAccessTokens::new("test-secret", Duration::minutes(5))),
+            access_tokens.clone(),
             Duration::days(1),
             false,
         ),
-        users: UserState::new(users, storage.clone()),
+        users: UserState::new(users.clone(), storage.clone()),
         files: FileState::new(storage),
+        chat: ChatState::new(chat_messages, users, access_tokens),
     };
     routes::router(state)
 }
@@ -152,4 +160,91 @@ async fn missing_file_returns_404() {
         .unwrap();
     let response = app.oneshot(request).await.unwrap();
     assert_eq!(response.status(), StatusCode::NOT_FOUND);
+}
+
+// --- Chat / WebSocket ---
+
+/// Serves `app` on an ephemeral local port and returns the bound address.
+async fn serve(app: Router) -> SocketAddr {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    addr
+}
+
+/// Reads the next text frame, skipping ping/pong control frames.
+async fn next_text<S>(ws: &mut S) -> String
+where
+    S: StreamExt<Item = Result<WsMessage, tokio_tungstenite::tungstenite::Error>> + Unpin,
+{
+    loop {
+        match ws.next().await.expect("stream closed").expect("ws error") {
+            WsMessage::Text(text) => return text.to_string(),
+            WsMessage::Ping(_) | WsMessage::Pong(_) => continue,
+            other => panic!("unexpected frame: {other:?}"),
+        }
+    }
+}
+
+#[tokio::test]
+async fn chat_ws_posts_and_echoes_message() {
+    let app = test_app();
+    let token = register(&app).await;
+    let addr = serve(app).await;
+
+    let url = format!("ws://{addr}/api/chat/ws?token={token}");
+    let (mut ws, _) = connect_async(url).await.unwrap();
+
+    ws.send(WsMessage::text(r#"{"body":"hello world"}"#))
+        .await
+        .unwrap();
+
+    let value: serde_json::Value = serde_json::from_str(&next_text(&mut ws).await).unwrap();
+    assert_eq!(value["body"], "hello world");
+    assert_eq!(value["author"]["username"], "alice");
+    assert!(value["id"].is_string());
+    assert!(value["created_at"].is_string());
+}
+
+#[tokio::test]
+async fn chat_ws_replays_history_to_new_client() {
+    let app = test_app();
+    let token = register(&app).await;
+    let addr = serve(app).await;
+    let url = format!("ws://{addr}/api/chat/ws?token={token}");
+
+    // First client posts a message and waits for its own echo, which only
+    // fires after the message is persisted.
+    let (mut first, _) = connect_async(url.clone()).await.unwrap();
+    first
+        .send(WsMessage::text(r#"{"body":"earlier message"}"#))
+        .await
+        .unwrap();
+    let _ = next_text(&mut first).await;
+
+    // A freshly connecting client receives that message as history.
+    let (mut second, _) = connect_async(url).await.unwrap();
+    let value: serde_json::Value = serde_json::from_str(&next_text(&mut second).await).unwrap();
+    assert_eq!(value["body"], "earlier message");
+}
+
+#[tokio::test]
+async fn chat_ws_rejects_invalid_token() {
+    let app = test_app();
+    let addr = serve(app).await;
+
+    let url = format!("ws://{addr}/api/chat/ws?token=not-a-real-token");
+    assert!(connect_async(url).await.is_err());
+}
+
+#[tokio::test]
+async fn chat_history_endpoint_requires_auth() {
+    let app = test_app();
+    let request = Request::get("/api/chat/messages")
+        .body(Body::empty())
+        .unwrap();
+    let response = app.oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
 }

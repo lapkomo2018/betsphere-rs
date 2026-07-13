@@ -1,8 +1,10 @@
+mod chat_message_repository;
 mod error;
 mod refresh_token_repository;
 mod unit_of_work;
 mod user_repository;
 
+pub use chat_message_repository::ChatMessageRepository;
 pub use error::RepositoryError;
 pub use refresh_token_repository::RefreshTokenRepository;
 pub use unit_of_work::{TransactionScope, UnitOfWork};

@@ -31,3 +31,5 @@ uuid = { workspace = true }
 
 [dev-dependencies]
 tower = { workspace = true }
+tokio-tungstenite = "0.29"
+futures-util = "0.3"
