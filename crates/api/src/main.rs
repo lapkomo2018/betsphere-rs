@@ -11,6 +11,7 @@ mod tests;
 use std::sync::Arc;
 
 use infrastructure::auth::{Argon2PasswordHasher, JwtAccessTokens};
+use infrastructure::messaging::RedisMessageBroker;
 use infrastructure::persistence::postgres::{
     self, PgChatMessageRepository, PgRefreshTokenRepository, PgUnitOfWork, PgUserRepository,
     run_migrations,
@@ -45,10 +46,11 @@ async fn main() {
         .await
         .expect("failed to connect to Redis");
     tracing::info!("connected to Redis");
+    let redis_client = redis::client(&config.redis.url()).expect("invalid Redis URL");
 
     let users = Arc::new(CachedUserRepository::new(
         Arc::new(PgUserRepository::new(pool.clone())),
-        cache,
+        cache.clone(),
         config.redis.cache_ttl,
     ));
     let refresh_tokens = Arc::new(PgRefreshTokenRepository::new(pool.clone()));
@@ -63,6 +65,7 @@ async fn main() {
         config.storage.root.clone(),
         format!("{}{}", config.server.app_url, routes::FILES_PUBLIC_BASE),
     ));
+    let broker = Arc::new(RedisMessageBroker::new(redis_client, cache));
 
     let state = AppState {
         auth: AuthState::new(
@@ -76,7 +79,7 @@ async fn main() {
         ),
         users: UserState::new(users.clone(), storage.clone()),
         files: FileState::new(storage),
-        chat: ChatState::new(chat_messages, users, access_tokens),
+        chat: ChatState::new(chat_messages, users, access_tokens, broker),
     };
 
     let cors = config.cors.layer().expect("invalid CORS configuration");

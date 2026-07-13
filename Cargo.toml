@@ -20,6 +20,7 @@ infrastructure = { path = "crates/infrastructure" }
 # Async runtime
 tokio = { version = "1", features = ["full"] }
 async-trait = "0.1"
+futures = "0.3"
 
 # Web
 axum = { version = "0.8", features = ["macros", "multipart", "ws"] }

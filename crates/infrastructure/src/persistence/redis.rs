@@ -6,8 +6,16 @@ use std::time::Duration;
 pub use cache::RedisCache;
 pub use user_repository::CachedUserRepository;
 
+pub use redis::Client;
 pub use redis::aio::ConnectionManager;
 use redis::aio::ConnectionManagerConfig;
+
+/// Opens a Redis client handle. Unlike [`connect`], this does not establish a
+/// connection; it is used to spin up dedicated Pub/Sub connections on demand
+/// (see [`crate::messaging::RedisMessageBroker`]).
+pub fn client(redis_url: &str) -> Result<Client, redis::RedisError> {
+    redis::Client::open(redis_url)
+}
 
 /// Connects to Redis and returns a connection manager that multiplexes one
 /// connection and transparently reconnects after failures. Cloning it is

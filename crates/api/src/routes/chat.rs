@@ -1,3 +1,7 @@
+use crate::error::{ApiError, ErrorResponse};
+use crate::extract::CurrentUser;
+use crate::state::{AppState, ChatState, GLOBAL_CHANNEL, HISTORY_LIMIT};
+use application::ports::MessageBrokerExt;
 use application::use_cases::chat::ChatMessageView;
 use application::ApplicationError;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
@@ -7,16 +11,12 @@ use axum::routing::get;
 use axum::Json;
 use chrono::{DateTime, Utc};
 use domain::entities::UserId;
+use futures::StreamExt;
 use serde::{Deserialize, Serialize};
-use tokio::sync::broadcast::error::RecvError;
 use utoipa::ToSchema;
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
 use uuid::Uuid;
-
-use crate::error::{ApiError, ErrorResponse};
-use crate::extract::CurrentUser;
-use crate::state::{AppState, ChatState, HISTORY_LIMIT};
 
 pub fn router() -> OpenApiRouter<AppState> {
     OpenApiRouter::new()
@@ -115,7 +115,13 @@ async fn chat_ws(
 async fn handle_socket(mut socket: WebSocket, state: ChatState, user_id: UserId) {
     // Subscribe before loading history so nothing published in between is lost;
     // any overlap is deduplicated client-side by message id.
-    let mut rx = state.hub.subscribe();
+    let mut live = match state.broker.subscribe(GLOBAL_CHANNEL).await {
+        Ok(live) => live,
+        Err(e) => {
+            tracing::error!(error = %e, "failed to subscribe to chat channel");
+            return;
+        }
+    };
 
     match state.list_recent.execute(HISTORY_LIMIT).await {
         Ok(views) => {
@@ -140,17 +146,23 @@ async fn handle_socket(mut socket: WebSocket, state: ChatState, user_id: UserId)
 
     loop {
         tokio::select! {
-            // Live message published by the hub -> forward to this client.
-            broadcast = rx.recv() => match broadcast {
-                Ok(frame) => {
-                    if socket.send(Message::Text(frame.into())).await.is_err() {
+            // Live message published to the room -> forward to this client.
+            payload = live.next() => match payload {
+                // Payloads are the JSON frames we publish, so forward as text.
+                Some(payload) => {
+                    let text = match String::from_utf8(payload) {
+                        Ok(text) => text,
+                        Err(e) => {
+                            tracing::warn!(error = %e, "skipping non-UTF-8 chat frame");
+                            continue;
+                        }
+                    };
+                    if socket.send(Message::Text(text.into())).await.is_err() {
                         break;
                     }
                 }
-                Err(RecvError::Lagged(skipped)) => {
-                    tracing::warn!(user_id = %user_id, skipped, "chat client lagged");
-                }
-                Err(RecvError::Closed) => break,
+                // Broker stream ended (backend closed); stop the loop.
+                None => break,
             },
             // Frame from this client -> post to the room.
             incoming = socket.recv() => match incoming {
@@ -188,11 +200,12 @@ async fn handle_incoming(socket: &mut WebSocket, state: &ChatState, user_id: Use
         }
     };
 
-    match serde_json::to_string(&ChatMessageResponse::from(&view)) {
-        // Publish to everyone, including this sender, so they receive the
-        // server-assigned id and timestamp.
-        Ok(frame) => state.hub.publish(frame),
-        Err(e) => tracing::error!(error = %e, "failed to serialize chat message"),
+    // Publish to everyone, including this sender, so they receive the
+    // server-assigned id and timestamp. The message is already persisted, so a
+    // broadcast failure only means live delivery was missed.
+    if let Err(e) = state.broker.publish_json(GLOBAL_CHANNEL, &ChatMessageResponse::from(&view)).await {
+        tracing::error!(error = %e, "failed to broadcast chat message");
+        send_error(socket, "message saved but could not be delivered live").await;
     }
 }
 

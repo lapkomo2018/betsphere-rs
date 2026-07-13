@@ -7,12 +7,13 @@ use axum::body::{Body, to_bytes};
 use axum::http::{Request, StatusCode, header};
 use chrono::Duration;
 use infrastructure::auth::{Argon2PasswordHasher, JwtAccessTokens};
+use infrastructure::messaging::InMemoryMessageBroker;
 use infrastructure::persistence::in_memory::{
     InMemoryChatMessageRepository, InMemoryRefreshTokenRepository, InMemoryUnitOfWork,
     InMemoryUserRepository,
 };
 use infrastructure::storage::LocalFileStorage;
-use futures_util::{SinkExt, StreamExt};
+use futures::{SinkExt, StreamExt};
 use std::net::SocketAddr;
 use tokio_tungstenite::connect_async;
 use tokio_tungstenite::tungstenite::Message as WsMessage;
@@ -50,7 +51,12 @@ fn test_app() -> Router {
         ),
         users: UserState::new(users.clone(), storage.clone()),
         files: FileState::new(storage),
-        chat: ChatState::new(chat_messages, users, access_tokens),
+        chat: ChatState::new(
+            chat_messages,
+            users,
+            access_tokens,
+            Arc::new(InMemoryMessageBroker::new()),
+        ),
     };
     routes::router(state)
 }

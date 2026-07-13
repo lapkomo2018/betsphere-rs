@@ -10,6 +10,7 @@ application = { workspace = true }
 argon2 = { workspace = true }
 async-trait = { workspace = true }
 chrono = { workspace = true }
+futures = { workspace = true }
 jsonwebtoken = { workspace = true }
 redis = { workspace = true }
 serde = { workspace = true }
