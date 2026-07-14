@@ -2,6 +2,7 @@ mod auth;
 mod chat;
 mod files;
 mod health;
+mod markets;
 mod users;
 
 pub use files::PUBLIC_BASE as FILES_PUBLIC_BASE;
@@ -48,6 +49,7 @@ pub fn router(state: AppState) -> Router {
         .merge(health::router())
         .nest("/api/auth", auth::router())
         .nest("/api/users", users::router())
+        .nest("/api/markets", markets::router())
         .nest("/api/chat", chat::router())
         .nest(files::PUBLIC_BASE, files::router())
         .split_for_parts();

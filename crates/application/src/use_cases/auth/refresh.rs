@@ -3,8 +3,8 @@ use std::sync::Arc;
 use chrono::Utc;
 use domain::repositories::UnitOfWork;
 
-use crate::use_cases::auth::session::{hash_refresh_token, AuthSession, SessionIssuer};
 use crate::ApplicationError;
+use crate::use_cases::auth::session::{AuthSession, SessionIssuer, hash_refresh_token};
 
 /// Exchanges a valid refresh token for a new token pair (rotation: the old
 /// refresh token is invalidated in the same transaction).

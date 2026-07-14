@@ -41,14 +41,14 @@ pub(super) async fn insert_refresh_token(
         "INSERT INTO refresh_tokens (id, user_id, token_hash, expires_at, created_at)
          VALUES ($1, $2, $3, $4, $5)",
     )
-        .bind(token.id())
-        .bind(token.user_id().as_uuid())
-        .bind(token.token_hash())
-        .bind(token.expires_at())
-        .bind(token.created_at())
-        .execute(exec)
-        .await
-        .map_err(map_sqlx_err)?;
+    .bind(token.id())
+    .bind(token.user_id().as_uuid())
+    .bind(token.token_hash())
+    .bind(token.expires_at())
+    .bind(token.created_at())
+    .execute(exec)
+    .await
+    .map_err(map_sqlx_err)?;
     Ok(())
 }
 
@@ -60,10 +60,10 @@ pub(super) async fn find_refresh_token_by_hash(
         "SELECT id, user_id, token_hash, expires_at, created_at
          FROM refresh_tokens WHERE token_hash = $1",
     )
-        .bind(token_hash)
-        .fetch_optional(exec)
-        .await
-        .map_err(map_sqlx_err)?;
+    .bind(token_hash)
+    .fetch_optional(exec)
+    .await
+    .map_err(map_sqlx_err)?;
     Ok(row.map(RefreshToken::from))
 }
 

@@ -81,7 +81,11 @@ mod tests {
         type Error = String;
 
         fn try_from(bytes: Vec<u8>) -> Result<Self, Self::Error> {
-            bytes.first().copied().map(Ping).ok_or("empty payload".into())
+            bytes
+                .first()
+                .copied()
+                .map(Ping)
+                .ok_or("empty payload".into())
         }
     }
 

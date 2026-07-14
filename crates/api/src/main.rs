@@ -13,8 +13,8 @@ use std::sync::Arc;
 use infrastructure::auth::{Argon2PasswordHasher, JwtAccessTokens};
 use infrastructure::messaging::RedisMessageBroker;
 use infrastructure::persistence::postgres::{
-    self, PgChatMessageRepository, PgRefreshTokenRepository, PgUnitOfWork, PgUserRepository,
-    run_migrations,
+    self, PgChatMessageRepository, PgMarketRepository, PgRefreshTokenRepository, PgUnitOfWork,
+    PgUserRepository, run_migrations,
 };
 use infrastructure::persistence::redis::{self, CachedUserRepository};
 use infrastructure::storage::LocalFileStorage;
@@ -24,7 +24,7 @@ use tracing::Level;
 use tracing_subscriber::EnvFilter;
 
 use crate::config::Config;
-use crate::state::{AppState, AuthState, ChatState, FileState, UserState};
+use crate::state::{AppState, AuthState, ChatState, FileState, MarketState, UserState};
 
 #[tokio::main]
 async fn main() {
@@ -55,6 +55,7 @@ async fn main() {
     ));
     let refresh_tokens = Arc::new(PgRefreshTokenRepository::new(pool.clone()));
     let chat_messages = Arc::new(PgChatMessageRepository::new(pool.clone()));
+    let markets = Arc::new(PgMarketRepository::new(pool.clone()));
     let uow = Arc::new(PgUnitOfWork::new(pool));
     let hasher = Arc::new(Argon2PasswordHasher::new());
     let access_tokens = Arc::new(JwtAccessTokens::new(
@@ -80,6 +81,7 @@ async fn main() {
         users: UserState::new(users.clone(), storage.clone()),
         files: FileState::new(storage),
         chat: ChatState::new(chat_messages, users, access_tokens, broker),
+        markets: MarketState::new(markets),
     };
 
     let cors = config.cors.layer().expect("invalid CORS configuration");

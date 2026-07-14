@@ -18,6 +18,9 @@ pub enum ApplicationError {
     #[error("{0}")]
     Unauthorized(String),
 
+    #[error("{0}")]
+    Forbidden(String),
+
     #[error("internal error: {0}")]
     Internal(String),
 }

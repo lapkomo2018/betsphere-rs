@@ -1,15 +1,17 @@
 mod chat_message_repository;
+mod market_repository;
 mod refresh_token_repository;
 mod unit_of_work;
 mod user_repository;
 
 pub use chat_message_repository::PgChatMessageRepository;
+pub use market_repository::PgMarketRepository;
 pub use refresh_token_repository::PgRefreshTokenRepository;
 pub use unit_of_work::PgUnitOfWork;
 pub use user_repository::PgUserRepository;
 
-use sqlx::postgres::PgPoolOptions;
 pub use sqlx::PgPool;
+use sqlx::postgres::PgPoolOptions;
 
 /// SQL migrations embedded into the binary at compile time from the
 /// workspace-root `migrations/` directory.

@@ -2,8 +2,8 @@ use std::sync::Arc;
 
 use domain::repositories::RefreshTokenRepository;
 
-use crate::use_cases::auth::session::hash_refresh_token;
 use crate::ApplicationError;
+use crate::use_cases::auth::session::hash_refresh_token;
 
 /// Invalidates the presented refresh token. Idempotent: logging out with an
 /// unknown or already-revoked token is not an error.

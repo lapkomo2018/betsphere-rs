@@ -1,7 +1,7 @@
 //! Request extractors.
 
-use application::ports::AccessClaims;
 use application::ApplicationError;
+use application::ports::AccessClaims;
 use axum::extract::FromRequestParts;
 use axum::http::header::AUTHORIZATION;
 use axum::http::request::Parts;

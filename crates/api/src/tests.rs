@@ -6,21 +6,21 @@ use axum::Router;
 use axum::body::{Body, to_bytes};
 use axum::http::{Request, StatusCode, header};
 use chrono::Duration;
+use futures::{SinkExt, StreamExt};
 use infrastructure::auth::{Argon2PasswordHasher, JwtAccessTokens};
 use infrastructure::messaging::InMemoryMessageBroker;
 use infrastructure::persistence::in_memory::{
-    InMemoryChatMessageRepository, InMemoryRefreshTokenRepository, InMemoryUnitOfWork,
-    InMemoryUserRepository,
+    InMemoryChatMessageRepository, InMemoryMarketRepository, InMemoryRefreshTokenRepository,
+    InMemoryUnitOfWork, InMemoryUserRepository,
 };
 use infrastructure::storage::LocalFileStorage;
-use futures::{SinkExt, StreamExt};
 use std::net::SocketAddr;
 use tokio_tungstenite::connect_async;
 use tokio_tungstenite::tungstenite::Message as WsMessage;
 use tower::ServiceExt;
 
 use crate::routes;
-use crate::state::{AppState, AuthState, ChatState, FileState, UserState};
+use crate::state::{AppState, AuthState, ChatState, FileState, MarketState, UserState};
 
 const APP_URL: &str = "http://localhost:8080";
 
@@ -57,6 +57,7 @@ fn test_app() -> Router {
             access_tokens,
             Arc::new(InMemoryMessageBroker::new()),
         ),
+        markets: MarketState::new(Arc::new(InMemoryMarketRepository::new())),
     };
     routes::router(state)
 }
@@ -253,4 +254,41 @@ async fn chat_history_endpoint_requires_auth() {
         .unwrap();
     let response = app.oneshot(request).await.unwrap();
     assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}
+
+// --- Markets ---
+
+#[tokio::test]
+async fn markets_listing_is_public_and_starts_empty() {
+    let app = test_app();
+    let request = Request::get("/api/markets").body(Body::empty()).unwrap();
+    let response = app.oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(body_json(response).await, serde_json::json!([]));
+}
+
+#[tokio::test]
+async fn creating_a_market_requires_admin() {
+    let app = test_app();
+    let token = register(&app).await; // registers as a regular `user`
+    let request = Request::post("/api/markets")
+        .header(header::AUTHORIZATION, format!("Bearer {token}"))
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(
+            r#"{"title":"Will it rain?","outcomes":["Yes","No"]}"#,
+        ))
+        .unwrap();
+    let response = app.oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn unknown_market_returns_404() {
+    let app = test_app();
+    let id = uuid::Uuid::new_v4();
+    let request = Request::get(format!("/api/markets/{id}"))
+        .body(Body::empty())
+        .unwrap();
+    let response = app.oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
 }

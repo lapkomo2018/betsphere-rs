@@ -6,8 +6,8 @@ use domain::repositories::RefreshTokenRepository;
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
-use crate::ports::AccessTokenService;
 use crate::ApplicationError;
+use crate::ports::AccessTokenService;
 
 /// The result of a successful register/login/refresh: the user plus a fresh
 /// token pair. `refresh_token` is the raw value handed to the client (the

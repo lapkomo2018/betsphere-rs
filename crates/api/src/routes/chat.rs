@@ -1,14 +1,14 @@
 use crate::error::{ApiError, ErrorResponse};
 use crate::extract::CurrentUser;
 use crate::state::{AppState, ChatState, GLOBAL_CHANNEL, HISTORY_LIMIT};
+use application::ApplicationError;
 use application::ports::MessageBrokerExt;
 use application::use_cases::chat::ChatMessageView;
-use application::ApplicationError;
+use axum::Json;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{Query, State};
 use axum::response::Response;
 use axum::routing::get;
-use axum::Json;
 use chrono::{DateTime, Utc};
 use domain::entities::UserId;
 use futures::StreamExt;
@@ -203,7 +203,11 @@ async fn handle_incoming(socket: &mut WebSocket, state: &ChatState, user_id: Use
     // Publish to everyone, including this sender, so they receive the
     // server-assigned id and timestamp. The message is already persisted, so a
     // broadcast failure only means live delivery was missed.
-    if let Err(e) = state.broker.publish_json(GLOBAL_CHANNEL, &ChatMessageResponse::from(&view)).await {
+    if let Err(e) = state
+        .broker
+        .publish_json(GLOBAL_CHANNEL, &ChatMessageResponse::from(&view))
+        .await
+    {
         tracing::error!(error = %e, "failed to broadcast chat message");
         send_error(socket, "message saved but could not be delivered live").await;
     }

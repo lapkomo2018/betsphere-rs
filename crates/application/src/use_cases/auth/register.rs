@@ -4,9 +4,9 @@ use domain::entities::User;
 use domain::repositories::UnitOfWork;
 use domain::value_objects::user::{Email, Password, Username};
 
+use crate::ApplicationError;
 use crate::ports::PasswordHasher;
 use crate::use_cases::auth::session::{AuthSession, SessionIssuer};
-use crate::ApplicationError;
 
 pub struct RegisterInput {
     pub username: String,

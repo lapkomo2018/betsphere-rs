@@ -1,8 +1,8 @@
 use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
-use crate::value_objects::user::{Email, PasswordHash, Username};
 use crate::DomainError;
+use crate::value_objects::user::{Email, PasswordHash, Username};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct UserId(Uuid);

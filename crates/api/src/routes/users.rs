@@ -1,10 +1,10 @@
-use application::use_cases::user::MAX_AVATAR_BYTES;
 use application::ApplicationError;
-use axum::extract::{DefaultBodyLimit, Multipart, Path, State};
+use application::use_cases::user::MAX_AVATAR_BYTES;
 use axum::Json;
+use axum::extract::{DefaultBodyLimit, Multipart, Path, State};
 use chrono::{DateTime, Utc};
-use domain::entities::User;
 use domain::DomainError;
+use domain::entities::User;
 use serde::Serialize;
 use utoipa::ToSchema;
 use utoipa_axum::router::OpenApiRouter;

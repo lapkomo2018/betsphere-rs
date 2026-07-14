@@ -1,9 +1,9 @@
+use argon2::Argon2;
 use argon2::password_hash::rand_core::OsRng;
 use argon2::password_hash::{
     Error as PhcError, PasswordHash as PhcHash, PasswordHasher as _, PasswordVerifier as _,
     SaltString,
 };
-use argon2::Argon2;
 
 use application::ports::{AuthPortError, PasswordHasher};
 use domain::value_objects::user::{Password, PasswordHash};

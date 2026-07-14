@@ -1,8 +1,8 @@
-use application::use_cases::auth::{AuthSession, LoginInput, RegisterInput};
 use application::ApplicationError;
+use application::use_cases::auth::{AuthSession, LoginInput, RegisterInput};
+use axum::Json;
 use axum::extract::State;
 use axum::http::StatusCode;
-use axum::Json;
 use axum_extra::extract::cookie::{Cookie, CookieJar, SameSite};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};

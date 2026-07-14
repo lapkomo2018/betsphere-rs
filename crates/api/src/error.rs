@@ -1,7 +1,7 @@
 use application::ApplicationError;
+use axum::Json;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use axum::Json;
 use serde::Serialize;
 use utoipa::ToSchema;
 
@@ -27,6 +27,7 @@ impl IntoResponse for ApiError {
             ApplicationError::NotFound(_) => StatusCode::NOT_FOUND,
             ApplicationError::Conflict(_) => StatusCode::CONFLICT,
             ApplicationError::Unauthorized(_) => StatusCode::UNAUTHORIZED,
+            ApplicationError::Forbidden(_) => StatusCode::FORBIDDEN,
             ApplicationError::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
         };
 

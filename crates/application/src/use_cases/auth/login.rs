@@ -3,9 +3,9 @@ use std::sync::Arc;
 use domain::repositories::{RefreshTokenRepository, UserRepository};
 use domain::value_objects::user::{Email, Password};
 
+use crate::ApplicationError;
 use crate::ports::PasswordHasher;
 use crate::use_cases::auth::session::{AuthSession, SessionIssuer};
-use crate::ApplicationError;
 
 pub struct LoginInput {
     pub email: String,

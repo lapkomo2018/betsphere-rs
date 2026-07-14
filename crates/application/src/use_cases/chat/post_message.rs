@@ -15,10 +15,7 @@ pub struct PostMessage {
 }
 
 impl PostMessage {
-    pub fn new(
-        messages: Arc<dyn ChatMessageRepository>,
-        users: Arc<dyn UserRepository>,
-    ) -> Self {
+    pub fn new(messages: Arc<dyn ChatMessageRepository>, users: Arc<dyn UserRepository>) -> Self {
         Self { messages, users }
     }
 
