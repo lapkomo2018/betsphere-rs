@@ -8,9 +8,9 @@ impl Password {
     pub fn new(value: impl Into<String>) -> Result<Self, DomainError> {
         let value = value.into();
         let len = value.chars().count();
-        if !(8..=128).contains(&len) {
+        if !(8..=256).contains(&len) {
             return Err(DomainError::Validation(
-                "password must be 8-128 characters".into(),
+                "password must be 8-256 characters".into(),
             ));
         }
         Ok(Self(value))
@@ -54,7 +54,7 @@ mod tests {
     #[test]
     fn rejects_short_and_long_passwords() {
         assert!(Password::new("short").is_err());
-        assert!(Password::new("a".repeat(129)).is_err());
+        assert!(Password::new("a".repeat(257)).is_err());
     }
 
     #[test]
