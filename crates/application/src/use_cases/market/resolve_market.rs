@@ -1,26 +1,25 @@
 use std::sync::Arc;
 
 use domain::entities::{MarketId, OutcomeId};
-use domain::repositories::MarketRepository;
+use domain::repositories::{BetRepository, MarketRepository};
 use domain::services::authorization;
 
 use super::MarketView;
 use crate::{Actor, ApplicationError};
 
-/// Settles a market on a winning outcome. Only actors allowed by
+/// Settles a market on a winning outcome and pays out the bets: every active
+/// bet on the winner is credited `amount / price`, every other active bet is
+/// marked lost. The market update, bet statuses, and balance credits are
+/// persisted atomically. Only actors allowed by
 /// [`authorization::can_manage_markets`] may call this.
-///
-/// Payouts to winning bets are intentionally out of scope here: bets are a
-/// separate feature (spec §4) not yet implemented. This resolves the market's
-/// state — status and winning outcome — which is the precondition for that
-/// later payout step.
 pub struct ResolveMarket {
     markets: Arc<dyn MarketRepository>,
+    bets: Arc<dyn BetRepository>,
 }
 
 impl ResolveMarket {
-    pub fn new(markets: Arc<dyn MarketRepository>) -> Self {
-        Self { markets }
+    pub fn new(markets: Arc<dyn MarketRepository>, bets: Arc<dyn BetRepository>) -> Self {
+        Self { markets, bets }
     }
 
     pub async fn execute(
@@ -50,7 +49,18 @@ impl ResolveMarket {
 
         // Domain guards against resolving twice.
         market.resolve(winning_outcome)?;
-        self.markets.resolve(&market).await?;
+
+        // Settle every open bet: winners are paid `amount / price`, the rest
+        // lose their stake. Persisted with the market update in one shot.
+        let mut settled = self.bets.active_for_market(market_id).await?;
+        for bet in &mut settled {
+            if bet.outcome_id() == winning_outcome {
+                bet.settle_as_winner()?;
+            } else {
+                bet.settle_as_loser()?;
+            }
+        }
+        self.bets.settle(&market, &settled).await?;
 
         Ok(MarketView { market, outcomes })
     }

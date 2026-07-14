@@ -148,7 +148,7 @@ async fn insert_outcome(
     Ok(())
 }
 
-async fn insert_price_point(
+pub(super) async fn insert_price_point(
     exec: impl PgExecutor<'_>,
     point: &PricePoint,
 ) -> Result<(), RepositoryError> {
@@ -217,6 +217,17 @@ impl MarketRepository for PgMarketRepository {
             .await
             .map_err(map_sqlx_err)?;
         row.map(Market::try_from).transpose()
+    }
+
+    async fn find_by_ids(&self, ids: &[MarketId]) -> Result<Vec<Market>, RepositoryError> {
+        let ids: Vec<Uuid> = ids.iter().map(|id| id.as_uuid()).collect();
+        let query = format!("SELECT {MARKET_COLUMNS} FROM markets WHERE id = ANY($1)");
+        let rows = sqlx::query_as::<_, MarketRow>(&query)
+            .bind(&ids)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(map_sqlx_err)?;
+        rows.into_iter().map(Market::try_from).collect()
     }
 
     async fn outcomes_for(&self, market_id: MarketId) -> Result<Vec<Outcome>, RepositoryError> {

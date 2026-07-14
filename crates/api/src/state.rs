@@ -5,6 +5,7 @@
 //! instead of growing one flat struct.
 
 mod auth;
+mod bet;
 mod chat;
 mod file;
 mod market;
@@ -13,6 +14,7 @@ mod user;
 use axum::extract::FromRef;
 
 pub use auth::AuthState;
+pub use bet::BetState;
 pub use chat::{ChatState, GLOBAL_CHANNEL, HISTORY_LIMIT};
 pub use file::FileState;
 pub use market::MarketState;
@@ -26,4 +28,5 @@ pub struct AppState {
     pub files: FileState,
     pub chat: ChatState,
     pub markets: MarketState,
+    pub bets: BetState,
 }

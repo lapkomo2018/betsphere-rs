@@ -198,6 +198,15 @@ impl Market {
         Ok(())
     }
 
+    /// Records a newly staked bet in the market's aggregates. `new_participant`
+    /// is true when this is the bettor's first bet on the market.
+    pub fn record_stake(&mut self, amount: i64, new_participant: bool) {
+        self.total_volume = self.total_volume.saturating_add(amount);
+        if new_participant {
+            self.participants_count += 1;
+        }
+    }
+
     /// Whether the market currently accepts bets: open and not past its deadline.
     pub fn accepts_bets(&self, now: DateTime<Utc>) -> bool {
         self.status == MarketStatus::Open && self.closes_at.is_none_or(|deadline| now < deadline)
@@ -302,6 +311,11 @@ impl Outcome {
 
     pub fn set_current_price(&mut self, price: Price) {
         self.current_price = price;
+    }
+
+    /// Adds a freshly staked bet's amount to this outcome's volume.
+    pub fn add_volume(&mut self, amount: i64) {
+        self.volume = self.volume.saturating_add(amount);
     }
 
     pub fn volume(&self) -> i64 {

@@ -24,6 +24,35 @@ impl InMemoryMarketRepository {
     fn popularity(market: &Market) -> i64 {
         market.total_volume() + i64::from(market.participants_count())
     }
+
+    /// Applies a placed bet's effects: outcome volumes and prices, the
+    /// market's aggregates, and the new price points. Test-double counterpart
+    /// of the SQL updates in `PgBetRepository::place`.
+    pub(crate) async fn apply_bet(
+        &self,
+        market_id: MarketId,
+        amount: i64,
+        new_participant: bool,
+        priced_outcomes: &[Outcome],
+        points: &[PricePoint],
+    ) {
+        if let Some(market) = self
+            .markets
+            .write()
+            .await
+            .iter_mut()
+            .find(|m| m.id() == market_id)
+        {
+            market.record_stake(amount, new_participant);
+        }
+        let mut outcomes = self.outcomes.write().await;
+        for priced in priced_outcomes {
+            if let Some(slot) = outcomes.iter_mut().find(|o| o.id() == priced.id()) {
+                *slot = priced.clone();
+            }
+        }
+        self.price_points.write().await.extend_from_slice(points);
+    }
 }
 
 #[async_trait]
@@ -47,6 +76,17 @@ impl MarketRepository for InMemoryMarketRepository {
             .iter()
             .find(|m| m.id() == id)
             .cloned())
+    }
+
+    async fn find_by_ids(&self, ids: &[MarketId]) -> Result<Vec<Market>, RepositoryError> {
+        Ok(self
+            .markets
+            .read()
+            .await
+            .iter()
+            .filter(|m| ids.contains(&m.id()))
+            .cloned()
+            .collect())
     }
 
     async fn outcomes_for(&self, market_id: MarketId) -> Result<Vec<Outcome>, RepositoryError> {

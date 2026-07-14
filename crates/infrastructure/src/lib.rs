@@ -6,6 +6,7 @@
 //! (Argon2, JWT).
 
 pub mod auth;
+pub mod events;
 pub mod messaging;
 pub mod persistence;
 pub mod storage;

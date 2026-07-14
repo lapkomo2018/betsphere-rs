@@ -10,8 +10,8 @@ use futures::{SinkExt, StreamExt};
 use infrastructure::auth::{Argon2PasswordHasher, JwtAccessTokens};
 use infrastructure::messaging::InMemoryMessageBroker;
 use infrastructure::persistence::in_memory::{
-    InMemoryChatMessageRepository, InMemoryMarketRepository, InMemoryRefreshTokenRepository,
-    InMemoryUnitOfWork, InMemoryUserRepository,
+    InMemoryBetRepository, InMemoryChatMessageRepository, InMemoryMarketRepository,
+    InMemoryRefreshTokenRepository, InMemoryUnitOfWork, InMemoryUserRepository,
 };
 use infrastructure::storage::LocalFileStorage;
 use std::net::SocketAddr;
@@ -20,12 +20,20 @@ use tokio_tungstenite::tungstenite::Message as WsMessage;
 use tower::ServiceExt;
 
 use crate::routes;
-use crate::state::{AppState, AuthState, ChatState, FileState, MarketState, UserState};
+use crate::state::{AppState, AuthState, BetState, ChatState, FileState, MarketState, UserState};
 
 const APP_URL: &str = "http://localhost:8080";
 
 fn test_app() -> Router {
+    test_env().0
+}
+
+/// The router plus the market store, so tests can seed markets without an
+/// admin account.
+fn test_env() -> (Router, Arc<InMemoryMarketRepository>) {
     let users = Arc::new(InMemoryUserRepository::new());
+    let markets = Arc::new(InMemoryMarketRepository::new());
+    let bets = Arc::new(InMemoryBetRepository::new(markets.clone(), users.clone()));
     let refresh_tokens = Arc::new(InMemoryRefreshTokenRepository::new());
     let chat_messages = Arc::new(InMemoryChatMessageRepository::new());
     let uow = Arc::new(InMemoryUnitOfWork::new(
@@ -53,13 +61,14 @@ fn test_app() -> Router {
         files: FileState::new(storage),
         chat: ChatState::new(
             chat_messages,
-            users,
+            users.clone(),
             access_tokens,
             Arc::new(InMemoryMessageBroker::new()),
         ),
-        markets: MarketState::new(Arc::new(InMemoryMarketRepository::new())),
+        markets: MarketState::new(markets.clone(), bets.clone()),
+        bets: BetState::new(bets, markets.clone(), users),
     };
-    routes::router(state)
+    (routes::router(state), markets)
 }
 
 async fn body_json(response: axum::response::Response) -> serde_json::Value {
@@ -291,4 +300,109 @@ async fn unknown_market_returns_404() {
         .unwrap();
     let response = app.oneshot(request).await.unwrap();
     assert_eq!(response.status(), StatusCode::NOT_FOUND);
+}
+
+// --- Bets ---
+
+/// Seeds an open Yes/No market at even prices and returns its id and the
+/// "Yes" outcome's id.
+async fn seed_market(markets: &InMemoryMarketRepository) -> (uuid::Uuid, uuid::Uuid) {
+    use domain::entities::{Market, Outcome};
+    use domain::repositories::MarketRepository;
+    use domain::value_objects::market::{MarketTitle, OutcomeLabel, Price};
+
+    let market = Market::new(MarketTitle::new("Will it rain?").unwrap(), None, None, None);
+    let outcomes = vec![
+        Outcome::new(
+            market.id(),
+            OutcomeLabel::new("Yes").unwrap(),
+            Price::from_ten_thousandths(5_000).unwrap(),
+        ),
+        Outcome::new(
+            market.id(),
+            OutcomeLabel::new("No").unwrap(),
+            Price::from_ten_thousandths(5_000).unwrap(),
+        ),
+    ];
+    markets.create(&market, &outcomes).await.unwrap();
+    (market.id().as_uuid(), outcomes[0].id().as_uuid())
+}
+
+async fn post_bet(
+    app: &Router,
+    token: &str,
+    market_id: uuid::Uuid,
+    outcome_id: uuid::Uuid,
+    amount: i64,
+) -> axum::response::Response {
+    let request = Request::post("/api/bets")
+        .header(header::AUTHORIZATION, format!("Bearer {token}"))
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(format!(
+            r#"{{"market_id":"{market_id}","outcome_id":"{outcome_id}","amount":{amount}}}"#
+        )))
+        .unwrap();
+    app.clone().oneshot(request).await.unwrap()
+}
+
+#[tokio::test]
+async fn placing_a_bet_debits_balance_and_shows_in_feed() {
+    let (app, markets) = test_env();
+    let (market_id, yes_id) = seed_market(&markets).await;
+    let token = register(&app).await;
+
+    let response = post_bet(&app, &token, market_id, yes_id, 1_000).await;
+    assert_eq!(response.status(), StatusCode::CREATED);
+    let bet = body_json(response).await;
+    assert_eq!(bet["status"], "active");
+    assert_eq!(bet["username"], "alice");
+    assert_eq!(bet["amount"], 1_000);
+    assert_eq!(bet["price"], 0.5); // fixed at the pre-bet even split
+
+    // The stake left the balance.
+    let request = Request::get("/api/users/me")
+        .header(header::AUTHORIZATION, format!("Bearer {token}"))
+        .body(Body::empty())
+        .unwrap();
+    let me = body_json(app.clone().oneshot(request).await.unwrap()).await;
+    assert_eq!(me["balance"], 9_000);
+
+    // The bet shows up in the public feed with its display names joined on.
+    let request = Request::get("/api/bets/feed").body(Body::empty()).unwrap();
+    let feed = body_json(app.clone().oneshot(request).await.unwrap()).await;
+    assert_eq!(feed.as_array().unwrap().len(), 1);
+    assert_eq!(feed[0]["market_title"], "Will it rain?");
+    assert_eq!(feed[0]["outcome_label"], "Yes");
+}
+
+#[tokio::test]
+async fn placing_a_bet_requires_auth() {
+    let (app, markets) = test_env();
+    let (market_id, yes_id) = seed_market(&markets).await;
+    let request = Request::post("/api/bets")
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(format!(
+            r#"{{"market_id":"{market_id}","outcome_id":"{yes_id}","amount":100}}"#
+        )))
+        .unwrap();
+    let response = app.oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn bet_beyond_balance_is_rejected() {
+    let (app, markets) = test_env();
+    let (market_id, yes_id) = seed_market(&markets).await;
+    let token = register(&app).await;
+
+    // Starting balance is 10 000; the stake must not clear.
+    let response = post_bet(&app, &token, market_id, yes_id, 20_000).await;
+    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+
+    let request = Request::get("/api/users/me")
+        .header(header::AUTHORIZATION, format!("Bearer {token}"))
+        .body(Body::empty())
+        .unwrap();
+    let me = body_json(app.clone().oneshot(request).await.unwrap()).await;
+    assert_eq!(me["balance"], 10_000);
 }

@@ -1,24 +1,26 @@
 use application::ApplicationError;
 use application::use_cases::user::MAX_AVATAR_BYTES;
 use axum::Json;
-use axum::extract::{DefaultBodyLimit, Multipart, Path, State};
+use axum::extract::{DefaultBodyLimit, Multipart, Path, Query, State};
 use chrono::{DateTime, Utc};
 use domain::DomainError;
-use domain::entities::User;
+use domain::entities::{User, UserId};
 use serde::Serialize;
 use utoipa::ToSchema;
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
 use uuid::Uuid;
 
+use super::bets::{BetListQuery, BetResponse, to_responses};
 use crate::error::{ApiError, ErrorResponse};
 use crate::extract::CurrentUser;
-use crate::state::{AppState, UserState};
+use crate::state::{AppState, BetState, UserState};
 
 pub fn router() -> OpenApiRouter<AppState> {
     OpenApiRouter::new()
         .routes(routes!(get_me))
         .routes(routes!(get_user))
+        .routes(routes!(get_user_bets))
         .routes(routes!(upload_avatar))
         // Room for the avatar plus multipart framing; other routes have no body.
         .layer(DefaultBodyLimit::max(MAX_AVATAR_BYTES + 64 * 1024))
@@ -119,6 +121,33 @@ async fn get_user(
 ) -> Result<Json<PublicUserResponse>, ApiError> {
     let user = state.get_user.execute(id).await?;
     Ok(Json(PublicUserResponse::from(&user)))
+}
+
+#[utoipa::path(
+    get,
+    path = "/{id}/bets",
+    tag = "users",
+    params(
+        ("id" = Uuid, Path, description = "User id"),
+        ("sort" = Option<String>, Query, description = "newest | popular (biggest stakes)"),
+        ("status" = Option<String>, Query, description = "active | won | lost | refunded"),
+        ("page" = Option<i64>, Query, description = "1-based page number"),
+        ("limit" = Option<i64>, Query, description = "Page size (max 100, default 20)"),
+    ),
+    responses(
+        (status = 200, description = "The user's bet history", body = [BetResponse]),
+        (status = 404, description = "User not found", body = ErrorResponse),
+        (status = 422, description = "Invalid filter", body = ErrorResponse),
+    )
+)]
+async fn get_user_bets(
+    State(state): State<BetState>,
+    Path(id): Path<Uuid>,
+    Query(query): Query<BetListQuery>,
+) -> Result<Json<Vec<BetResponse>>, ApiError> {
+    let filter = query.into_filter()?;
+    let views = state.user_bets.execute(UserId::from(id), &filter).await?;
+    Ok(Json(to_responses(&views)))
 }
 
 #[utoipa::path(

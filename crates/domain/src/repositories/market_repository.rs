@@ -71,6 +71,10 @@ pub trait MarketRepository: Send + Sync {
 
     async fn find_by_id(&self, id: MarketId) -> Result<Option<Market>, RepositoryError>;
 
+    /// Markets for several ids in one query, to avoid N+1 lookups when
+    /// enriching a bet listing. Order is unspecified; missing ids are skipped.
+    async fn find_by_ids(&self, ids: &[MarketId]) -> Result<Vec<Market>, RepositoryError>;
+
     /// Outcomes of one market, in a stable creation order.
     async fn outcomes_for(&self, market_id: MarketId) -> Result<Vec<Outcome>, RepositoryError>;
 

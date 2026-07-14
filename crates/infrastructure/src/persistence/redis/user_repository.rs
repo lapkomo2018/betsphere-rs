@@ -33,6 +33,14 @@ impl CachedUserRepository {
             cache: RedisCache::new(redis, ttl),
         }
     }
+
+    /// Drops the id-keyed entry so the next lookup reloads from the source
+    /// of truth (which also refreshes the email/username aliases; until
+    /// then those go stale for at most the TTL). Returns whether the
+    /// eviction was confirmed.
+    pub async fn evict(&self, id: UserId) -> bool {
+        self.cache.delete(&id_key(id)).await
+    }
 }
 
 #[async_trait]

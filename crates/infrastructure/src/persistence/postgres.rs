@@ -1,9 +1,11 @@
+mod bet_repository;
 mod chat_message_repository;
 mod market_repository;
 mod refresh_token_repository;
 mod unit_of_work;
 mod user_repository;
 
+pub use bet_repository::PgBetRepository;
 pub use chat_message_repository::PgChatMessageRepository;
 pub use market_repository::PgMarketRepository;
 pub use refresh_token_repository::PgRefreshTokenRepository;

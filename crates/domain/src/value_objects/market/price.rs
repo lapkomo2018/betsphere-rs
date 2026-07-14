@@ -19,6 +19,11 @@ impl Price {
     /// The impossible price, 0.0000.
     pub const ZERO: Price = Price(0);
 
+    /// The smallest non-zero price, 0.0001. Bets fix their price at placement
+    /// and pay out `amount / price`; backing an outcome whose volume share is
+    /// currently zero clamps to this tick so that division stays defined.
+    pub const MIN_TICK: Price = Price(1);
+
     /// Builds a price from ten-thousandths, rejecting anything outside
     /// `0..=10_000`.
     pub fn from_ten_thousandths(value: i32) -> Result<Self, DomainError> {

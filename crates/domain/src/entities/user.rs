@@ -163,6 +163,34 @@ impl User {
         self.balance
     }
 
+    /// Takes `amount` off the balance (e.g. staking a bet). Fails if the
+    /// balance does not cover it.
+    pub fn debit(&mut self, amount: i64) -> Result<(), DomainError> {
+        if amount <= 0 {
+            return Err(DomainError::Validation(
+                "debit amount must be positive".into(),
+            ));
+        }
+        if self.balance < amount {
+            return Err(DomainError::RuleViolation("insufficient balance".into()));
+        }
+        self.balance -= amount;
+        self.updated_at = Utc::now();
+        Ok(())
+    }
+
+    /// Adds `amount` to the balance (e.g. a payout or refund).
+    pub fn credit(&mut self, amount: i64) -> Result<(), DomainError> {
+        if amount <= 0 {
+            return Err(DomainError::Validation(
+                "credit amount must be positive".into(),
+            ));
+        }
+        self.balance = self.balance.saturating_add(amount);
+        self.updated_at = Utc::now();
+        Ok(())
+    }
+
     pub fn role(&self) -> Role {
         self.role
     }

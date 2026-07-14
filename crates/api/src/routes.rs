@@ -1,4 +1,5 @@
 mod auth;
+mod bets;
 mod chat;
 mod files;
 mod health;
@@ -50,6 +51,7 @@ pub fn router(state: AppState) -> Router {
         .nest("/api/auth", auth::router())
         .nest("/api/users", users::router())
         .nest("/api/markets", markets::router())
+        .nest("/api/bets", bets::router())
         .nest("/api/chat", chat::router())
         .nest(files::PUBLIC_BASE, files::router())
         .split_for_parts();

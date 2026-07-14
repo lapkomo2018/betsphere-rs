@@ -82,10 +82,16 @@ impl<C: Serialize + DeserializeOwned> RedisCache<C> {
         }
     }
 
-    pub async fn delete(&self, key: &str) {
+    /// Deletes `key`, returning whether the delete was confirmed. `false`
+    /// (error or timeout) lets callers that need certainty retry.
+    pub async fn delete(&self, key: &str) -> bool {
         let mut conn = self.redis.clone();
-        if let Err(e) = bounded(conn.del::<_, ()>(key)).await {
-            tracing::warn!("redis DEL {key} failed: {e}");
+        match bounded(conn.del::<_, ()>(key)).await {
+            Ok(()) => true,
+            Err(e) => {
+                tracing::warn!("redis DEL {key} failed: {e}");
+                false
+            }
         }
     }
 
