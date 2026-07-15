@@ -1,19 +1,32 @@
+use std::sync::Arc;
+
 use async_trait::async_trait;
 use tokio::sync::RwLock;
 
-use domain::entities::{ChatChannel, ChatMessage};
+use domain::entities::{ChatChannel, ChatMessage, MessageId};
+use domain::events::ChatMessagePosted;
 use domain::repositories::{ChatMessageRepository, RepositoryError};
+
+use crate::events::InMemoryEventBus;
 
 /// Thread-safe in-memory chat store, ordered by insertion. Useful for
 /// development and tests.
 #[derive(Default)]
 pub struct InMemoryChatMessageRepository {
     messages: RwLock<Vec<ChatMessage>>,
+    events: Option<Arc<InMemoryEventBus>>,
 }
 
 impl InMemoryChatMessageRepository {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Dispatches the events the Postgres implementation records in its
+    /// outbox (here synchronously, right after the write) through `events`.
+    pub fn with_events(mut self, events: Arc<InMemoryEventBus>) -> Self {
+        self.events = Some(events);
+        self
     }
 }
 
@@ -21,7 +34,24 @@ impl InMemoryChatMessageRepository {
 impl ChatMessageRepository for InMemoryChatMessageRepository {
     async fn save(&self, message: &ChatMessage) -> Result<(), RepositoryError> {
         self.messages.write().await.push(message.clone());
+        if let Some(events) = &self.events {
+            events
+                .dispatch(&ChatMessagePosted {
+                    message_id: message.id(),
+                })
+                .await;
+        }
         Ok(())
+    }
+
+    async fn find_by_id(&self, id: MessageId) -> Result<Option<ChatMessage>, RepositoryError> {
+        Ok(self
+            .messages
+            .read()
+            .await
+            .iter()
+            .find(|m| m.id() == id)
+            .cloned())
     }
 
     async fn list_recent(

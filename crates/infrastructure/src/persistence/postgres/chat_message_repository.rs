@@ -3,11 +3,13 @@ use chrono::{DateTime, Utc};
 use sqlx::{PgExecutor, PgPool};
 use uuid::Uuid;
 
-use domain::entities::{ChatChannel, ChatMessage};
+use domain::entities::{ChatChannel, ChatMessage, MessageId};
+use domain::events::ChatMessagePosted;
 use domain::repositories::{ChatMessageRepository, RepositoryError};
 use domain::value_objects::chat::MessageBody;
 
 use super::map_sqlx_err;
+use crate::events::publish;
 
 const MESSAGE_COLUMNS: &str = "id, author_id, market_id, body, created_at";
 
@@ -102,7 +104,28 @@ impl PgChatMessageRepository {
 #[async_trait]
 impl ChatMessageRepository for PgChatMessageRepository {
     async fn save(&self, message: &ChatMessage) -> Result<(), RepositoryError> {
-        insert_message(&self.pool, message).await
+        let mut tx = self.pool.begin().await.map_err(map_sqlx_err)?;
+        insert_message(&mut *tx, message).await?;
+        // Committed together with the insert, so the broadcast to live
+        // subscribers fires exactly when the message becomes real.
+        publish(
+            &mut *tx,
+            &ChatMessagePosted {
+                message_id: message.id(),
+            },
+        )
+        .await?;
+        tx.commit().await.map_err(map_sqlx_err)
+    }
+
+    async fn find_by_id(&self, id: MessageId) -> Result<Option<ChatMessage>, RepositoryError> {
+        let query = format!("SELECT {MESSAGE_COLUMNS} FROM chat_messages WHERE id = $1");
+        let row = sqlx::query_as::<_, ChatMessageRow>(&query)
+            .bind(id.as_uuid())
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(map_sqlx_err)?;
+        row.map(ChatMessage::try_from).transpose()
     }
 
     async fn list_recent(

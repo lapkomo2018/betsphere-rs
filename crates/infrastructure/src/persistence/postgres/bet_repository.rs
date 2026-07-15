@@ -4,7 +4,7 @@ use sqlx::{PgPool, QueryBuilder};
 use uuid::Uuid;
 
 use domain::entities::{Bet, BetStatus, Market, MarketId, Outcome, PricePoint, UserId};
-use domain::events::DomainEvent;
+use domain::events::{MarketPricesUpdated, UserBalanceChanged};
 use domain::repositories::{BetFilter, BetRepository, BetSort, RepositoryError, UserStats};
 use domain::value_objects::market::Price;
 
@@ -189,8 +189,17 @@ impl BetRepository for PgBetRepository {
         // cache) hear about the balance change exactly when it becomes real.
         publish(
             &mut *tx,
-            &DomainEvent::UserBalanceChanged {
+            &UserBalanceChanged {
                 user_id: bet.user_id(),
+            },
+        )
+            .await?;
+
+        // Likewise for the price move, which live market feeds broadcast.
+        publish(
+            &mut *tx,
+            &MarketPricesUpdated {
+                market_id: bet.market_id(),
             },
         )
             .await?;
@@ -250,7 +259,7 @@ impl BetRepository for PgBetRepository {
             .map(|b| b.user_id())
             .collect();
         for user_id in paid {
-            publish(&mut *tx, &DomainEvent::UserBalanceChanged { user_id }).await?;
+            publish(&mut *tx, &UserBalanceChanged { user_id }).await?;
         }
 
         tx.commit().await.map_err(map_sqlx_err)

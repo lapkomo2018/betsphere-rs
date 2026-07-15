@@ -10,6 +10,7 @@ mod chat;
 mod file;
 mod market;
 mod user;
+mod ws;
 
 use axum::extract::FromRef;
 
@@ -19,6 +20,7 @@ pub use chat::{ChatState, HISTORY_LIMIT};
 pub use file::FileState;
 pub use market::MarketState;
 pub use user::UserState;
+pub use ws::WsState;
 
 /// Top-level state the router is built with; substates are extracted from it.
 #[derive(Clone, FromRef)]
@@ -27,6 +29,7 @@ pub struct AppState {
     pub users: UserState,
     pub files: FileState,
     pub chat: ChatState,
+    pub ws: WsState,
     pub markets: MarketState,
     pub bets: BetState,
 }

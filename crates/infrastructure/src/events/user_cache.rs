@@ -1,8 +1,7 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use domain::entities::UserId;
-use domain::events::DomainEvent;
+use domain::events::UserBalanceChanged;
 
 use super::EventHandler;
 use crate::persistence::redis::CachedUserRepository;
@@ -22,23 +21,13 @@ impl UserCacheInvalidator {
 }
 
 #[async_trait]
-impl EventHandler for UserCacheInvalidator {
-    fn topic(&self) -> &'static str {
-        DomainEvent::USER_BALANCE_CHANGED
-    }
-
-    async fn handle(&self, payload: &serde_json::Value) -> Result<(), String> {
-        let user_id = payload
-            .get("user_id")
-            .and_then(|v| v.as_str())
-            .and_then(|s| s.parse::<uuid::Uuid>().ok())
-            .ok_or_else(|| format!("malformed {} payload: {payload}", self.topic()))?;
-
-        if self.users.evict(UserId::from(user_id)).await {
+impl EventHandler<UserBalanceChanged> for UserCacheInvalidator {
+    async fn handle(&self, event: &UserBalanceChanged) -> Result<(), String> {
+        if self.users.evict(event.user_id).await {
             Ok(())
         } else {
             // Unconfirmed delete (Redis unreachable): stay pending and retry.
-            Err(format!("could not evict user {user_id} from cache"))
+            Err(format!("could not evict user {} from cache", event.user_id))
         }
     }
 }

@@ -8,6 +8,7 @@ use axum::http::{Request, StatusCode, header};
 use chrono::Duration;
 use futures::{SinkExt, StreamExt};
 use infrastructure::auth::{Argon2PasswordHasher, JwtAccessTokens};
+use infrastructure::events::{ChatMessageBroadcaster, InMemoryEventBus, PriceUpdateBroadcaster};
 use infrastructure::messaging::InMemoryMessageBroker;
 use infrastructure::persistence::in_memory::{
     InMemoryBetRepository, InMemoryChatMessageRepository, InMemoryMarketRepository,
@@ -20,7 +21,9 @@ use tokio_tungstenite::tungstenite::Message as WsMessage;
 use tower::ServiceExt;
 
 use crate::routes;
-use crate::state::{AppState, AuthState, BetState, ChatState, FileState, MarketState, UserState};
+use crate::state::{
+    AppState, AuthState, BetState, ChatState, FileState, MarketState, UserState, WsState,
+};
 
 const APP_URL: &str = "http://localhost:8080";
 
@@ -33,9 +36,24 @@ fn test_app() -> Router {
 fn test_env() -> (Router, Arc<InMemoryMarketRepository>) {
     let users = Arc::new(InMemoryUserRepository::new());
     let markets = Arc::new(InMemoryMarketRepository::new());
-    let bets = Arc::new(InMemoryBetRepository::new(markets.clone(), users.clone()));
     let refresh_tokens = Arc::new(InMemoryRefreshTokenRepository::new());
-    let chat_messages = Arc::new(InMemoryChatMessageRepository::new());
+
+    // The in-memory event bus plays the role of the outbox pipeline: repos
+    // dispatch events synchronously to the broadcasters, which publish to the
+    // broker the WebSocket endpoint subscribes to — the full live-delivery
+    // path, minus Postgres.
+    let broker = Arc::new(InMemoryMessageBroker::new());
+    let bus = Arc::new(InMemoryEventBus::new());
+    let bets = Arc::new(
+        InMemoryBetRepository::new(markets.clone(), users.clone()).with_events(bus.clone()),
+    );
+    let chat_messages = Arc::new(InMemoryChatMessageRepository::new().with_events(bus.clone()));
+    bus.register(PriceUpdateBroadcaster::new(markets.clone(), broker.clone()));
+    bus.register(ChatMessageBroadcaster::new(
+        chat_messages.clone(),
+        users.clone(),
+        broker.clone(),
+    ));
     let uow = Arc::new(InMemoryUnitOfWork::new(
         users.clone(),
         refresh_tokens.clone(),
@@ -59,12 +77,13 @@ fn test_env() -> (Router, Arc<InMemoryMarketRepository>) {
         ),
         users: UserState::new(users.clone(), bets.clone(), storage.clone()),
         files: FileState::new(storage),
-        chat: ChatState::new(
+        chat: ChatState::new(chat_messages.clone(), users.clone(), markets.clone()),
+        ws: WsState::new(
             chat_messages,
             users.clone(),
             markets.clone(),
             access_tokens,
-            Arc::new(InMemoryMessageBroker::new()),
+            broker,
         ),
         markets: MarketState::new(markets.clone(), bets.clone()),
         bets: BetState::new(bets, markets.clone(), users),
@@ -231,7 +250,7 @@ async fn chat_ws_posts_and_echoes_message() {
     let token = register(&app).await;
     let addr = serve(app).await;
 
-    let url = format!("ws://{addr}/api/chat/ws?token={token}");
+    let url = format!("ws://{addr}/ws?token={token}");
     let (mut ws, _) = connect_async(url).await.unwrap();
 
     let history = subscribe(&mut ws, "global_chat").await;
@@ -257,7 +276,7 @@ async fn chat_ws_replays_history_to_new_client() {
     let app = test_app();
     let token = register(&app).await;
     let addr = serve(app).await;
-    let url = format!("ws://{addr}/api/chat/ws?token={token}");
+    let url = format!("ws://{addr}/ws?token={token}");
 
     // First client posts a message and waits for its own echo, which only
     // fires after the message is persisted.
@@ -283,7 +302,7 @@ async fn market_chat_is_scoped_to_its_market() {
     let (market_id, _) = seed_market(&markets).await;
     let token = register(&app).await;
     let addr = serve(app).await;
-    let url = format!("ws://{addr}/api/chat/ws?token={token}");
+    let url = format!("ws://{addr}/ws?token={token}");
 
     let market_channel = format!("market_chat:{market_id}");
     let (mut ws, _) = connect_async(url.clone()).await.unwrap();
@@ -309,7 +328,7 @@ async fn chat_ws_rejects_message_to_unknown_market() {
     let token = register(&app).await;
     let addr = serve(app).await;
 
-    let url = format!("ws://{addr}/api/chat/ws?token={token}");
+    let url = format!("ws://{addr}/ws?token={token}");
     let (mut ws, _) = connect_async(url).await.unwrap();
 
     let ghost = uuid::Uuid::new_v4();
@@ -328,8 +347,123 @@ async fn chat_ws_rejects_invalid_token() {
     let app = test_app();
     let addr = serve(app).await;
 
-    let url = format!("ws://{addr}/api/chat/ws?token=not-a-real-token");
+    let url = format!("ws://{addr}/ws?token=not-a-real-token");
     assert!(connect_async(url).await.is_err());
+}
+
+// --- Market feed (WebSocket) ---
+
+#[tokio::test]
+async fn market_feed_subscribe_sends_price_snapshot() {
+    let (app, markets) = test_env();
+    let (market_id, yes_id) = seed_market(&markets).await;
+    let token = register(&app).await;
+    let addr = serve(app).await;
+
+    let url = format!("ws://{addr}/ws?token={token}");
+    let (mut ws, _) = connect_async(url).await.unwrap();
+
+    let channel = format!("market:{market_id}");
+    ws.send(WsMessage::text(format!(
+        r#"{{"type":"subscribe","channel":"{channel}"}}"#
+    )))
+    .await
+    .unwrap();
+
+    // One price_update per outcome of the seeded Yes/No market.
+    let mut prices = std::collections::HashMap::new();
+    for _ in 0..2 {
+        let value: serde_json::Value = serde_json::from_str(&next_text(&mut ws).await).unwrap();
+        assert_eq!(value["type"], "price_update", "unexpected frame: {value}");
+        assert_eq!(value["channel"], channel.as_str());
+        assert!(value["data"]["recorded_at"].is_string());
+        prices.insert(
+            value["data"]["outcome_id"].as_str().unwrap().to_owned(),
+            value["data"]["price"].as_f64().unwrap(),
+        );
+    }
+    assert_eq!(prices.len(), 2);
+    assert_eq!(prices[&yes_id.to_string()], 0.5);
+}
+
+#[tokio::test]
+async fn market_feed_streams_price_updates_after_a_bet() {
+    let (app, markets) = test_env();
+    let (market_id, yes_id) = seed_market(&markets).await;
+    let token = register(&app).await;
+    let addr = serve(app.clone()).await;
+
+    let url = format!("ws://{addr}/ws?token={token}");
+    let (mut ws, _) = connect_async(url).await.unwrap();
+
+    let channel = format!("market:{market_id}");
+    ws.send(WsMessage::text(format!(
+        r#"{{"type":"subscribe","channel":"{channel}"}}"#
+    )))
+    .await
+    .unwrap();
+    // Drain the two snapshot frames of the even Yes/No market.
+    for _ in 0..2 {
+        next_text(&mut ws).await;
+    }
+
+    // A bet placed over REST puts all volume on "Yes"...
+    let response = post_bet(&app, &token, market_id, yes_id, 1_000).await;
+    assert_eq!(response.status(), StatusCode::CREATED);
+
+    // ...and the recalculated prices arrive as live frames.
+    let mut prices = std::collections::HashMap::new();
+    for _ in 0..2 {
+        let value: serde_json::Value = serde_json::from_str(&next_text(&mut ws).await).unwrap();
+        assert_eq!(value["type"], "price_update", "unexpected frame: {value}");
+        assert_eq!(value["channel"], channel.as_str());
+        prices.insert(
+            value["data"]["outcome_id"].as_str().unwrap().to_owned(),
+            value["data"]["price"].as_f64().unwrap(),
+        );
+    }
+    assert_eq!(prices.len(), 2);
+    assert_eq!(prices[&yes_id.to_string()], 1.0);
+}
+
+#[tokio::test]
+async fn market_feed_rejects_unknown_market() {
+    let app = test_app();
+    let token = register(&app).await;
+    let addr = serve(app).await;
+
+    let url = format!("ws://{addr}/ws?token={token}");
+    let (mut ws, _) = connect_async(url).await.unwrap();
+
+    let ghost = uuid::Uuid::new_v4();
+    ws.send(WsMessage::text(format!(
+        r#"{{"type":"subscribe","channel":"market:{ghost}"}}"#
+    )))
+    .await
+    .unwrap();
+
+    let value: serde_json::Value = serde_json::from_str(&next_text(&mut ws).await).unwrap();
+    assert_eq!(value["type"], "error");
+}
+
+#[tokio::test]
+async fn market_feed_rejects_chat_messages() {
+    let (app, markets) = test_env();
+    let (market_id, _) = seed_market(&markets).await;
+    let token = register(&app).await;
+    let addr = serve(app).await;
+
+    let url = format!("ws://{addr}/ws?token={token}");
+    let (mut ws, _) = connect_async(url).await.unwrap();
+
+    ws.send(WsMessage::text(format!(
+        r#"{{"type":"chat_message","channel":"market:{market_id}","body":"wrong channel"}}"#
+    )))
+    .await
+    .unwrap();
+
+    let value: serde_json::Value = serde_json::from_str(&next_text(&mut ws).await).unwrap();
+    assert_eq!(value["type"], "error");
 }
 
 #[tokio::test]

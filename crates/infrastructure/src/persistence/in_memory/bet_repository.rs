@@ -4,11 +4,13 @@ use async_trait::async_trait;
 use tokio::sync::RwLock;
 
 use domain::entities::{Bet, BetStatus, Market, MarketId, Outcome, PricePoint, UserId};
+use domain::events::{Event, MarketPricesUpdated, UserBalanceChanged};
 use domain::repositories::{
     BetFilter, BetRepository, BetSort, MarketRepository, RepositoryError, UserRepository, UserStats,
 };
 
 use super::{InMemoryMarketRepository, InMemoryUserRepository};
+use crate::events::InMemoryEventBus;
 
 /// Thread-safe in-memory bet store. Placement and settlement mutate the
 /// sibling in-memory user and market stores the way the Postgres
@@ -18,6 +20,7 @@ pub struct InMemoryBetRepository {
     bets: RwLock<Vec<Bet>>,
     markets: Arc<InMemoryMarketRepository>,
     users: Arc<InMemoryUserRepository>,
+    events: Option<Arc<InMemoryEventBus>>,
 }
 
 impl InMemoryBetRepository {
@@ -26,6 +29,20 @@ impl InMemoryBetRepository {
             bets: RwLock::new(Vec::new()),
             markets,
             users,
+            events: None,
+        }
+    }
+
+    /// Dispatches the events the Postgres implementation records in its
+    /// outbox (here synchronously, right after the write) through `events`.
+    pub fn with_events(mut self, events: Arc<InMemoryEventBus>) -> Self {
+        self.events = Some(events);
+        self
+    }
+
+    async fn dispatch<E: Event>(&self, event: E) {
+        if let Some(events) = &self.events {
+            events.dispatch(&event).await;
         }
     }
 
@@ -91,6 +108,15 @@ impl BetRepository for InMemoryBetRepository {
                 points,
             )
             .await;
+
+        self.dispatch(UserBalanceChanged {
+            user_id: bet.user_id(),
+        })
+        .await;
+        self.dispatch(MarketPricesUpdated {
+            market_id: bet.market_id(),
+        })
+        .await;
         Ok(())
     }
 
@@ -121,6 +147,17 @@ impl BetRepository for InMemoryBetRepository {
                     .map_err(|e| RepositoryError::Storage(format!("payout failed: {e}")))?;
                 self.users.save(&user).await?;
             }
+        }
+        drop(bets);
+
+        // One event per paid user, as the Postgres implementation records.
+        let paid: std::collections::HashSet<UserId> = settled
+            .iter()
+            .filter(|b| b.payout().is_some())
+            .map(|b| b.user_id())
+            .collect();
+        for user_id in paid {
+            self.dispatch(UserBalanceChanged { user_id }).await;
         }
         Ok(())
     }

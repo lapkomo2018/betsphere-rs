@@ -2,12 +2,12 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
-use domain::events::DomainEvent;
+use domain::events::Event;
 use domain::repositories::RepositoryError;
 use sqlx::postgres::PgListener;
 use sqlx::{PgExecutor, PgPool};
 
-use super::EventHandler;
+use super::{DeliveryError, ErasedEventHandler, EventHandler, TypedHandler};
 use crate::persistence::postgres::map_sqlx_err;
 
 /// Postgres NOTIFY channel that wakes the processor as soon as an event commits.
@@ -23,30 +23,26 @@ const BATCH: i64 = 100;
 /// Records `event` in the outbox and notifies the processor. Call with the
 /// transaction that makes the change the event describes — the row and the
 /// NOTIFY only take effect if that transaction commits.
-pub async fn publish(
+///
+/// The payload is the event's own serde encoding and the topic is `E::TOPIC`,
+/// so publish and delivery round-trip every event type mechanically.
+pub async fn publish<E: Event>(
     exec: impl PgExecutor<'_>,
-    event: &DomainEvent,
+    event: &E,
 ) -> Result<(), RepositoryError> {
+    let payload = serde_json::to_value(event)
+        .map_err(|e| RepositoryError::Storage(format!("unencodable event {}: {e}", E::TOPIC)))?;
     sqlx::query(
         "WITH queued AS (INSERT INTO outbox_events (topic, payload) VALUES ($1, $2))
          SELECT pg_notify($3, '')",
     )
-        .bind(event.topic())
-        .bind(payload_for(event))
-        .bind(CHANNEL)
-        .execute(exec)
-        .await
-        .map_err(map_sqlx_err)?;
+    .bind(E::TOPIC)
+    .bind(payload)
+    .bind(CHANNEL)
+    .execute(exec)
+    .await
+    .map_err(map_sqlx_err)?;
     Ok(())
-}
-
-/// Wire format of each event type. The inverse lives in the event's handler.
-fn payload_for(event: &DomainEvent) -> serde_json::Value {
-    match event {
-        DomainEvent::UserBalanceChanged { user_id } => {
-            serde_json::json!({ "user_id": user_id.as_uuid() })
-        }
-    }
 }
 
 /// Delivers outbox events to registered handlers. Run [`run`](Self::run) in
@@ -54,7 +50,7 @@ fn payload_for(event: &DomainEvent) -> serde_json::Value {
 /// `FOR UPDATE SKIP LOCKED`, each claiming disjoint batches.
 pub struct OutboxProcessor {
     pool: PgPool,
-    handlers: HashMap<String, Vec<Arc<dyn EventHandler>>>,
+    handlers: HashMap<String, Vec<Arc<dyn ErasedEventHandler>>>,
 }
 
 impl OutboxProcessor {
@@ -65,11 +61,17 @@ impl OutboxProcessor {
         }
     }
 
-    pub fn with_handler(mut self, handler: Arc<dyn EventHandler>) -> Self {
+    /// Registers `handler` on its event type's topic. The event type is
+    /// inferred from the handler's `EventHandler<E>` impl.
+    pub fn with_handler<E, H>(mut self, handler: H) -> Self
+    where
+        E: Event,
+        H: EventHandler<E> + 'static,
+    {
         self.handlers
-            .entry(handler.topic().to_string())
+            .entry(E::TOPIC.to_string())
             .or_default()
-            .push(handler);
+            .push(Arc::new(TypedHandler::new(handler)));
         self
     }
 
@@ -137,18 +139,27 @@ impl OutboxProcessor {
              ORDER BY id LIMIT $1
              FOR UPDATE SKIP LOCKED",
         )
-            .bind(BATCH)
-            .fetch_all(&mut *tx)
-            .await?;
+        .bind(BATCH)
+        .fetch_all(&mut *tx)
+        .await?;
 
         let mut delivered: Vec<i64> = Vec::new();
         let mut failed: Vec<i64> = Vec::new();
         for (id, topic, payload) in &events {
             let mut ok = true;
             for handler in self.handlers.get(topic).into_iter().flatten() {
-                if let Err(e) = handler.handle(payload).await {
-                    tracing::warn!("outbox event {id} ({topic}) failed: {e}");
-                    ok = false;
+                match handler.handle(payload).await {
+                    Ok(()) => {}
+                    // A payload that doesn't decode (e.g. written by an older
+                    // build) can never succeed; drop it as processed rather
+                    // than poisoning the retry loop.
+                    Err(DeliveryError::Undecodable(e)) => {
+                        tracing::error!("dropping undecodable outbox event {id} ({topic}): {e}");
+                    }
+                    Err(DeliveryError::Failed(e)) => {
+                        tracing::warn!("outbox event {id} ({topic}) failed: {e}");
+                        ok = false;
+                    }
                 }
             }
             if ok {

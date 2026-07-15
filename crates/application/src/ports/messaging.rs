@@ -18,6 +18,21 @@ pub enum MessageBrokerError {
 /// A live stream of the raw byte payloads published to one channel.
 pub type MessageStream = Pin<Box<dyn Stream<Item = Vec<u8>> + Send>>;
 
+/// A message type bound to the broker channel family that carries it.
+///
+/// The channel is derived from the type plus a `Scope` value (e.g. which
+/// market), so a publisher and its subscribers can never pair a channel with
+/// the wrong payload type — the compiler picks the channel from the message.
+/// The serde bounds are how the broker encodes and decodes the message.
+/// The typed counterpart of topics on `domain::events::Event`.
+pub trait Broadcast: Serialize + DeserializeOwned + Send + Sync + 'static {
+    /// What one channel instance is scoped to.
+    type Scope;
+
+    /// The broker channel carrying this message type for `scope`.
+    fn channel(scope: &Self::Scope) -> String;
+}
+
 /// A live stream of typed messages decoded from one channel.
 pub type TypedStream<T> = Pin<Box<dyn Stream<Item = T> + Send>>;
 
@@ -52,6 +67,29 @@ pub trait MessageBroker: Send + Sync {
 /// `dyn MessageBroker` without touching the object-safe core.
 #[async_trait]
 pub trait MessageBrokerExt: MessageBroker {
+    /// Publishes a [`Broadcast`] message on the channel its type derives
+    /// from `scope`.
+    async fn broadcast<M>(&self, scope: &M::Scope, message: &M) -> Result<(), MessageBrokerError>
+    where
+        M: Broadcast,
+        M::Scope: Sync,
+    {
+        self.publish_json(&M::channel(scope), message).await
+    }
+
+    /// Subscribes to the channel carrying `M` for `scope`, yielding decoded
+    /// messages. Undecodable payloads are logged and skipped.
+    async fn subscribe_broadcast<M>(
+        &self,
+        scope: &M::Scope,
+    ) -> Result<TypedStream<M>, MessageBrokerError>
+    where
+        M: Broadcast,
+        M::Scope: Sync,
+    {
+        self.subscribe_json(&M::channel(scope)).await
+    }
+
     /// Serializes `value` as JSON and publishes it to `channel`.
     async fn publish_json<T>(&self, channel: &str, value: &T) -> Result<(), MessageBrokerError>
     where

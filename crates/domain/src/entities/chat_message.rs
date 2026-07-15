@@ -31,7 +31,7 @@ impl From<Option<MarketId>> for ChatChannel {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct MessageId(Uuid);
 
 impl MessageId {

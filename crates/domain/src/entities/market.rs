@@ -4,7 +4,7 @@ use uuid::Uuid;
 use crate::DomainError;
 use crate::value_objects::market::{MarketTitle, OutcomeLabel, Price};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct MarketId(Uuid);
 
 impl MarketId {

@@ -5,6 +5,7 @@ mod files;
 mod health;
 mod markets;
 mod users;
+mod ws;
 
 pub use files::PUBLIC_BASE as FILES_PUBLIC_BASE;
 
@@ -48,6 +49,7 @@ impl Modify for SecurityAddon {
 pub fn router(state: AppState) -> Router {
     let (router, openapi) = OpenApiRouter::with_openapi(ApiDoc::openapi())
         .merge(health::router())
+        .merge(ws::router())
         .nest("/api/auth", auth::router())
         .nest("/api/users", users::router())
         .nest("/api/markets", markets::router())

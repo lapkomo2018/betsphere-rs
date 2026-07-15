@@ -11,7 +11,9 @@ mod tests;
 use std::sync::Arc;
 
 use infrastructure::auth::{Argon2PasswordHasher, JwtAccessTokens};
-use infrastructure::events::{OutboxProcessor, UserCacheInvalidator};
+use infrastructure::events::{
+    ChatMessageBroadcaster, OutboxProcessor, PriceUpdateBroadcaster, UserCacheInvalidator,
+};
 use infrastructure::messaging::RedisMessageBroker;
 use infrastructure::persistence::postgres::{
     self, PgBetRepository, PgChatMessageRepository, PgMarketRepository, PgRefreshTokenRepository,
@@ -25,7 +27,9 @@ use tracing::Level;
 use tracing_subscriber::EnvFilter;
 
 use crate::config::Config;
-use crate::state::{AppState, AuthState, BetState, ChatState, FileState, MarketState, UserState};
+use crate::state::{
+    AppState, AuthState, BetState, ChatState, FileState, MarketState, UserState, WsState,
+};
 
 #[tokio::main]
 async fn main() {
@@ -59,11 +63,19 @@ async fn main() {
     let markets = Arc::new(PgMarketRepository::new(pool.clone()));
     let bets = Arc::new(PgBetRepository::new(pool.clone()));
 
-    // Bet transactions change balances in raw SQL and record that fact in the
-    // outbox; the processor delivers those events to keep the user cache (and
-    // any future subscriber) in sync.
+    let broker = Arc::new(RedisMessageBroker::new(redis_client, cache));
+
+    // Repositories record state changes (balance moves, price moves, posted
+    // chat messages) in the outbox; the processor delivers the events to keep
+    // the user cache in sync and to broadcast to live WebSocket subscribers.
     let outbox = OutboxProcessor::new(pool.clone())
-        .with_handler(Arc::new(UserCacheInvalidator::new(users.clone())));
+        .with_handler(UserCacheInvalidator::new(users.clone()))
+        .with_handler(PriceUpdateBroadcaster::new(markets.clone(), broker.clone()))
+        .with_handler(ChatMessageBroadcaster::new(
+            chat_messages.clone(),
+            users.clone(),
+            broker.clone(),
+        ));
     tokio::spawn(outbox.run());
 
     let uow = Arc::new(PgUnitOfWork::new(pool));
@@ -76,7 +88,6 @@ async fn main() {
         config.storage.root.clone(),
         format!("{}{}", config.server.app_url, routes::FILES_PUBLIC_BASE),
     ));
-    let broker = Arc::new(RedisMessageBroker::new(redis_client, cache));
 
     let state = AppState {
         auth: AuthState::new(
@@ -90,7 +101,8 @@ async fn main() {
         ),
         users: UserState::new(users.clone(), bets.clone(), storage.clone()),
         files: FileState::new(storage),
-        chat: ChatState::new(
+        chat: ChatState::new(chat_messages.clone(), users.clone(), markets.clone()),
+        ws: WsState::new(
             chat_messages,
             users.clone(),
             markets.clone(),

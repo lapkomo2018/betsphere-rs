@@ -7,6 +7,6 @@ mod storage;
 
 pub use auth::{AccessClaims, AccessTokenService, AuthPortError, PasswordHasher};
 pub use messaging::{
-    MessageBroker, MessageBrokerError, MessageBrokerExt, MessageStream, TypedStream,
+    Broadcast, MessageBroker, MessageBrokerError, MessageBrokerExt, MessageStream, TypedStream,
 };
 pub use storage::{FileStorage, StoragePortError, StoredFile};
