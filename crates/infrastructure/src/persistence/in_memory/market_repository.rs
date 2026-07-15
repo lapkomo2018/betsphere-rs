@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use tokio::sync::RwLock;
 
-use domain::entities::{Market, MarketId, MarketStatus, Outcome, PricePoint};
+use domain::entities::{Market, MarketId, MarketStatus, Outcome, OutcomeId, PricePoint};
 use domain::repositories::{
     MarketFilter, MarketRepository, MarketSort, PriceHistoryQuery, RepositoryError,
 };
@@ -100,6 +100,16 @@ impl MarketRepository for InMemoryMarketRepository {
             .collect())
     }
 
+    async fn outcome_by_id(&self, outcome_id: OutcomeId) -> Result<Option<Outcome>, RepositoryError> {
+        Ok(self
+            .outcomes
+            .read()
+            .await
+            .iter()
+            .find(|o| o.id() == outcome_id)
+            .cloned())
+    }
+
     async fn outcomes_for_markets(
         &self,
         market_ids: &[MarketId],
@@ -121,15 +131,15 @@ impl MarketRepository for InMemoryMarketRepository {
             .filter(|m| {
                 filter.status.is_none_or(|status| m.status() == status)
                     && filter
-                        .category
-                        .as_deref()
-                        .is_none_or(|c| m.category() == Some(c))
+                    .category
+                    .as_deref()
+                    .is_none_or(|c| m.category() == Some(c))
                     && filter.search.as_deref().is_none_or(|q| {
-                        m.title()
-                            .as_str()
-                            .to_lowercase()
-                            .contains(&q.to_lowercase())
-                    })
+                    m.title()
+                        .as_str()
+                        .to_lowercase()
+                        .contains(&q.to_lowercase())
+                })
             })
             .cloned()
             .collect();

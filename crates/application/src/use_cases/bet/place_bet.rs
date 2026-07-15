@@ -2,18 +2,17 @@ use std::sync::Arc;
 
 use chrono::Utc;
 
-use domain::DomainError;
-use domain::entities::{Bet, MarketId, OutcomeId, PricePoint};
+use domain::entities::{Bet, OutcomeId, PricePoint};
 use domain::repositories::{BetRepository, MarketRepository, UserRepository};
 use domain::services::pricing;
 use domain::value_objects::market::Price;
+use domain::DomainError;
 
-use super::{BetView, view_for};
+use super::{view_for, BetView};
 use crate::{Actor, ApplicationError};
 
 /// Validated inputs for placing a bet.
 pub struct NewBet {
-    pub market_id: MarketId,
     pub outcome_id: OutcomeId,
     /// Stake in minimal currency units.
     pub amount: i64,
@@ -42,11 +41,16 @@ impl PlaceBet {
     }
 
     pub async fn execute(&self, actor: &Actor, input: NewBet) -> Result<BetView, ApplicationError> {
+        let outcome = self.markets
+            .outcome_by_id(input.outcome_id)
+            .await?
+            .ok_or_else(|| ApplicationError::NotFound(format!("outcome {}", input.outcome_id)))?;
+
         let market = self
             .markets
-            .find_by_id(input.market_id)
+            .find_by_id(outcome.market_id())
             .await?
-            .ok_or_else(|| ApplicationError::NotFound(format!("market {}", input.market_id)))?;
+            .ok_or_else(|| ApplicationError::NotFound(format!("market {}", outcome.market_id())))?;
         if !market.accepts_bets(Utc::now()) {
             return Err(DomainError::RuleViolation("market is not accepting bets".into()).into());
         }

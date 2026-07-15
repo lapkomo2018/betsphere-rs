@@ -3,7 +3,7 @@ use chrono::{DateTime, Utc};
 use async_trait::async_trait;
 
 use super::RepositoryError;
-use crate::entities::{Market, MarketId, MarketStatus, Outcome, PricePoint};
+use crate::entities::{Market, MarketId, MarketStatus, Outcome, OutcomeId, PricePoint};
 
 /// How a market listing is ordered.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -77,6 +77,9 @@ pub trait MarketRepository: Send + Sync {
 
     /// Outcomes of one market, in a stable creation order.
     async fn outcomes_for(&self, market_id: MarketId) -> Result<Vec<Outcome>, RepositoryError>;
+
+    /// Retrieves an `Outcome` entity by its unique identifier.
+    async fn outcome_by_id(&self, outcome_id: OutcomeId) -> Result<Option<Outcome>, RepositoryError>;
 
     /// Outcomes for several markets in one query, to avoid N+1 lookups when
     /// building a listing.

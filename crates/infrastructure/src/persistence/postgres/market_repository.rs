@@ -3,7 +3,7 @@ use chrono::{DateTime, Utc};
 use sqlx::{PgExecutor, PgPool, QueryBuilder};
 use uuid::Uuid;
 
-use domain::entities::{Market, MarketId, MarketStatus, Outcome, PricePoint};
+use domain::entities::{Market, MarketId, MarketStatus, Outcome, OutcomeId, PricePoint};
 use domain::repositories::{
     MarketFilter, MarketRepository, MarketSort, PriceHistoryQuery, PriceInterval, RepositoryError,
 };
@@ -113,19 +113,19 @@ async fn insert_market(exec: impl PgExecutor<'_>, market: &Market) -> Result<(),
               total_volume, participants_count, created_at, closes_at)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
     )
-    .bind(market.id().as_uuid())
-    .bind(market.title().as_str())
-    .bind(market.description())
-    .bind(market.category())
-    .bind(market.status().as_str())
-    .bind(market.resolved_outcome_id().map(|id| id.as_uuid()))
-    .bind(market.total_volume())
-    .bind(market.participants_count())
-    .bind(market.created_at())
-    .bind(market.closes_at())
-    .execute(exec)
-    .await
-    .map_err(map_sqlx_err)?;
+        .bind(market.id().as_uuid())
+        .bind(market.title().as_str())
+        .bind(market.description())
+        .bind(market.category())
+        .bind(market.status().as_str())
+        .bind(market.resolved_outcome_id().map(|id| id.as_uuid()))
+        .bind(market.total_volume())
+        .bind(market.participants_count())
+        .bind(market.created_at())
+        .bind(market.closes_at())
+        .execute(exec)
+        .await
+        .map_err(map_sqlx_err)?;
     Ok(())
 }
 
@@ -137,14 +137,14 @@ async fn insert_outcome(
         "INSERT INTO outcomes (id, market_id, label, current_price, volume)
          VALUES ($1, $2, $3, $4, $5)",
     )
-    .bind(outcome.id().as_uuid())
-    .bind(outcome.market_id().as_uuid())
-    .bind(outcome.label().as_str())
-    .bind(outcome.current_price().as_ten_thousandths())
-    .bind(outcome.volume())
-    .execute(exec)
-    .await
-    .map_err(map_sqlx_err)?;
+        .bind(outcome.id().as_uuid())
+        .bind(outcome.market_id().as_uuid())
+        .bind(outcome.label().as_str())
+        .bind(outcome.current_price().as_ten_thousandths())
+        .bind(outcome.volume())
+        .execute(exec)
+        .await
+        .map_err(map_sqlx_err)?;
     Ok(())
 }
 
@@ -239,6 +239,16 @@ impl MarketRepository for PgMarketRepository {
             .await
             .map_err(map_sqlx_err)?;
         rows.into_iter().map(Outcome::try_from).collect()
+    }
+
+    async fn outcome_by_id(&self, outcome_id: OutcomeId) -> Result<Option<Outcome>, RepositoryError> {
+        let query = format!("SELECT {OUTCOME_COLUMNS} FROM outcomes WHERE id = $1");
+        let row = sqlx::query_as::<_, OutcomeRow>(&query)
+            .bind(outcome_id.as_uuid())
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(map_sqlx_err)?;
+        row.map(Outcome::try_from).transpose()
     }
 
     async fn outcomes_for_markets(
