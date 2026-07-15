@@ -6,20 +6,24 @@
 //! - `global_chat` — the global chat room;
 //! - `market_chat:<market uuid>` — one market's chat room;
 //! - `market:<market uuid>` — one market's live feed (price updates).
+//! - `market_bets:<market uuid>` — one market's live feed of placed bets.
 
 use std::collections::HashMap;
 
 use crate::error::ApiError;
 use crate::state::{AppState, WsState, HISTORY_LIMIT};
 use application::ports::{Broadcast, MessageBrokerExt, TypedStream};
-use application::realtime::{ChatMessageBroadcast, PriceTick, PriceUpdateBroadcast};
+use application::realtime::{
+    BetPlacedBroadcast, ChatMessageBroadcast, PriceTick, PriceUpdateBroadcast,
+};
 use application::ApplicationError;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{Query, State};
 use axum::response::Response;
 use axum::routing::get;
-use chrono::Utc;
-use domain::entities::{ChatChannel, MarketId, UserId};
+use chrono::{DateTime, Utc};
+use domain::entities::{Bet, ChatChannel, MarketId, OutcomeId, UserId};
+use domain::repositories::BetFilter;
 use futures::StreamExt;
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
@@ -46,6 +50,9 @@ const MARKET_CHAT_PREFIX: &str = "market_chat:";
 /// Wire-name prefix of a market's live feed: `market:<market uuid>`.
 const MARKET_FEED_PREFIX: &str = "market:";
 
+/// Wire-name prefix of a market's bet feed: `market_bets:<market uuid>`.
+const MARKET_BETS_PREFIX: &str = "market_bets:";
+
 /// A stream a client can subscribe to, parsed from its wire name.
 #[derive(Debug, Clone, Copy)]
 enum Channel {
@@ -53,6 +60,8 @@ enum Channel {
     Chat(ChatChannel),
     /// A market's live feed; server-to-client only (`price_update` frames).
     MarketFeed(MarketId),
+    /// A market's live bet feed; server-to-client only (`bet_placed` frames).
+    MarketBets(MarketId),
 }
 
 fn parse_channel(name: &str) -> Option<Channel> {
@@ -63,9 +72,13 @@ fn parse_channel(name: &str) -> Option<Channel> {
         let id = Uuid::parse_str(id).ok()?;
         return Some(Channel::Chat(ChatChannel::Market(id.into())));
     }
-    let id = name.strip_prefix(MARKET_FEED_PREFIX)?;
+    if let Some(id) = name.strip_prefix(MARKET_FEED_PREFIX) {
+        let id = Uuid::parse_str(id).ok()?;
+        return Some(Channel::MarketFeed(id.into()));
+    }
+    let id = name.strip_prefix(MARKET_BETS_PREFIX)?;
     let id = Uuid::parse_str(id).ok()?;
-    Some(Channel::MarketFeed(id.into()))
+    Some(Channel::MarketBets(id.into()))
 }
 
 // --- Frames ---
@@ -93,6 +106,14 @@ enum ServerFrame {
         channel: String,
         data: Vec<ChatMessageResponse>,
     },
+    /// One market's recent bets (oldest first), sent once per bet-feed
+    /// subscribe. Shares the `history` wire tag with the chat variant; the
+    /// channel name tells the client which payload shape to expect.
+    #[serde(rename = "history")]
+    BetHistory {
+        channel: String,
+        data: Vec<BetPlacedResponse>,
+    },
     /// A live message posted to a chat room this client is subscribed to.
     ChatMessage {
         channel: String,
@@ -100,9 +121,67 @@ enum ServerFrame {
     },
     /// One outcome's new price on a market feed. A snapshot of every outcome
     /// is sent on subscribe; live frames follow as bets move the prices.
-    PriceUpdate { channel: String, data: PriceTick },
+    PriceUpdate { channel: String, data: PriceUpdateResponse },
+    /// One newly committed bet on a market's bet feed.
+    BetPlaced {
+        channel: String,
+        data: BetPlacedResponse,
+    },
     /// A problem with the client's last frame; the connection stays open.
     Error { message: String },
+}
+
+#[derive(Debug, Serialize)]
+struct PriceUpdateResponse {
+    outcome_id: Uuid,
+    price: f64,
+    recorded_at: DateTime<Utc>,
+}
+
+impl From<PriceTick> for PriceUpdateResponse {
+    fn from(value: PriceTick) -> Self {
+        Self {
+            outcome_id: value.outcome_id.as_uuid(),
+            price: value.price.as_fraction(),
+            recorded_at: value.recorded_at,
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+struct BetPlacedResponse {
+    id: Uuid,
+    user_id: Uuid,
+    outcome_id: OutcomeId,
+    amount: i64,
+    price: f64,
+    created_at: DateTime<Utc>,
+}
+
+impl From<BetPlacedBroadcast> for BetPlacedResponse {
+    fn from(value: BetPlacedBroadcast) -> Self {
+        Self {
+            id: value.id.as_uuid(),
+            user_id: value.user_id.as_uuid(),
+            outcome_id: value.outcome_id,
+            amount: value.amount,
+            price: value.price.as_fraction(),
+            created_at: value.created_at,
+        }
+    }
+}
+
+impl From<&Bet> for BetPlacedResponse {
+    fn from(bet: &Bet) -> Self {
+        Self {
+            id: bet.id().as_uuid(),
+            user_id: bet.user_id().as_uuid(),
+            outcome_id: bet.outcome_id(),
+            amount: bet.amount(),
+            price: bet.price().as_fraction(),
+            created_at: bet.created_at(),
+        }
+    }
 }
 
 /// Query string on the WebSocket handshake. Browsers can't set the
@@ -188,7 +267,7 @@ async fn handle_frame(
         Ok(frame) => frame,
         Err(_) => {
             let hint = "expected {\"type\": \"subscribe|unsubscribe|chat_message\", \"channel\": \
-                        \"global_chat\" | \"market_chat:<id>\" | \"market:<id>\", ...}";
+                        \"global_chat\" | \"market_chat:<id>\" | \"market:<id>\" | \"market_bets:<id>\", ...}";
             return send_error(socket, hint).await;
         }
     };
@@ -203,7 +282,7 @@ async fn handle_frame(
             }
             // Per kind: subscribe first, then replay current state, so
             // nothing published in between is lost; clients deduplicate any
-            // overlap (chat by message id, price frames by being idempotent).
+            // overlap (chat and bets by id, price frames by being idempotent).
             let forward = match channel {
                 Channel::Chat(chat) => {
                     let Some(live) =
@@ -258,7 +337,7 @@ async fn handle_frame(
                             socket,
                             &ServerFrame::PriceUpdate {
                                 channel: name.clone(),
-                                data: PriceTick {
+                                data: PriceUpdateResponse {
                                     outcome_id: outcome.id().as_uuid(),
                                     price: outcome.current_price().as_fraction(),
                                     recorded_at: now,
@@ -277,9 +356,51 @@ async fn handle_frame(
                             .into_iter()
                             .map(|tick| ServerFrame::PriceUpdate {
                                 channel: frame_channel.clone(),
-                                data: tick,
+                                data: PriceUpdateResponse::from(tick),
                             })
                             .collect()
+                    })
+                }
+                Channel::MarketBets(market_id) => {
+                    match state.markets.find_by_id(market_id).await {
+                        Ok(Some(_)) => {}
+                        Ok(None) => {
+                            return send_error(socket, &format!("unknown market {market_id}"))
+                                .await;
+                        }
+                        Err(e) => return send_error(socket, &e.to_string()).await,
+                    }
+                    let Some(live) =
+                        subscribe::<BetPlacedBroadcast>(socket, state, &market_id).await?
+                    else {
+                        return Ok(());
+                    };
+                    let filter = BetFilter {
+                        limit: HISTORY_LIMIT,
+                        ..BetFilter::default()
+                    };
+                    let mut bets = match state.bets.find_by_market(market_id, &filter).await {
+                        Ok(bets) => bets,
+                        Err(e) => return send_error(socket, &e.to_string()).await,
+                    };
+                    // The repo lists newest first; history replays oldest
+                    // first, like chat.
+                    bets.reverse();
+                    send_frame(
+                        socket,
+                        &ServerFrame::BetHistory {
+                            channel: name.clone(),
+                            data: bets.iter().map(BetPlacedResponse::from).collect(),
+                        },
+                    )
+                        .await?;
+
+                    let frame_channel = name.clone();
+                    spawn_forwarder(live, tx.clone(), move |message| {
+                        vec![ServerFrame::BetPlaced {
+                            channel: frame_channel.clone(),
+                            data: BetPlacedResponse::from(message),
+                        }]
                     })
                 }
             };

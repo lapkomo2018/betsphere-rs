@@ -14,6 +14,7 @@ so this document describes the platform real-time API.
 - `global_chat` — global chat room
 - `market_chat:<market_uuid>` — chat room for a specific market
 - `market:<market_uuid>` — live price feed for a specific market
+- `market_bets:<market_uuid>` — live feed of placed bets for a specific market
 
 ## Client → Server frames
 
@@ -22,27 +23,47 @@ All frames are JSON objects with `type` in `snake_case`.
 ### Subscribe
 
 ```json
-{ "type": "subscribe", "channel": "global_chat" }
+{
+  "type": "subscribe",
+  "channel": "global_chat"
+}
 ```
 
 ```json
-{ "type": "subscribe", "channel": "market_chat:7f6ec8be-e0dc-4fd8-b00c-c8c3850f4e91" }
+{
+  "type": "subscribe",
+  "channel": "market_chat:7f6ec8be-e0dc-4fd8-b00c-c8c3850f4e91"
+}
 ```
 
 ```json
-{ "type": "subscribe", "channel": "market:7f6ec8be-e0dc-4fd8-b00c-c8c3850f4e91" }
+{
+  "type": "subscribe",
+  "channel": "market:7f6ec8be-e0dc-4fd8-b00c-c8c3850f4e91"
+}
+```
+
+```json
+{ "type": "subscribe", "channel": "market_bets:7f6ec8be-e0dc-4fd8-b00c-c8c3850f4e91" }
 ```
 
 ### Unsubscribe
 
 ```json
-{ "type": "unsubscribe", "channel": "global_chat" }
+{
+  "type": "unsubscribe",
+  "channel": "global_chat"
+}
 ```
 
 ### Post chat message
 
 ```json
-{ "type": "chat_message", "channel": "global_chat", "body": "Hello" }
+{
+  "type": "chat_message",
+  "channel": "global_chat",
+  "body": "Hello"
+}
 ```
 
 Notes:
@@ -57,6 +78,8 @@ All server frames are JSON with `type` in `snake_case`.
 ### History (on chat subscribe)
 
 Sent once after successful subscribe to a chat channel.
+(A `market_bets:<id>` subscribe is also answered with a `history` frame —
+see [Bet placed](#bet-placed) below.)
 
 ```json
 {
@@ -113,12 +136,54 @@ then sends live updates.
 }
 ```
 
+### Bet placed
+
+On `market_bets:<market_id>` subscribe, the server first answers with a
+`history` frame carrying the market's recent bets (oldest first, same shape
+as the `data` object below), then streams newly committed bets. Clients
+should deduplicate by bet `id` in case a live frame overlaps the history.
+
+```json
+{
+  "type": "history",
+  "channel": "market_bets:7f6ec8be-e0dc-4fd8-b00c-c8c3850f4e91",
+  "data": [
+    {
+      "id": "7f6ec8be-e0dc-4fd8-b00c-c8c3850f4e93",
+      "user_id": "7f6ec8be-e0dc-4fd8-b00c-c8c3850f4e94",
+      "outcome_id": "7f6ec8be-e0dc-4fd8-b00c-c8c3850f4e92",
+      "amount": 1000,
+      "price": 0.5,
+      "created_at": "2026-07-15T19:03:00Z"
+    }
+  ]
+}
+```
+
+```json
+{
+  "type": "bet_placed",
+  "channel": "market_bets:7f6ec8be-e0dc-4fd8-b00c-c8c3850f4e91",
+  "data": {
+    "id": "7f6ec8be-e0dc-4fd8-b00c-c8c3850f4e93",
+    "user_id": "7f6ec8be-e0dc-4fd8-b00c-c8c3850f4e94",
+    "outcome_id": "7f6ec8be-e0dc-4fd8-b00c-c8c3850f4e92",
+    "amount": 1000,
+    "price": 0.5,
+    "created_at": "2026-07-15T19:03:00Z"
+  }
+}
+```
+
 ### Error
 
 Connection stays open; client can send another valid frame.
 
 ```json
-{ "type": "error", "message": "unknown channel \"foo\"" }
+{
+  "type": "error",
+  "message": "unknown channel \"foo\""
+}
 ```
 
 ## Behavioral details

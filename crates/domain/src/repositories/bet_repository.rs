@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 
 use super::RepositoryError;
-use crate::entities::{Bet, BetStatus, Market, MarketId, Outcome, PricePoint, UserId};
+use crate::entities::{Bet, BetId, BetStatus, Market, MarketId, Outcome, PricePoint, UserId};
 
 /// How a bet listing is ordered.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -83,6 +83,9 @@ pub trait BetRepository: Send + Sync {
     /// each settled bet's status and payout, and the balance credits for
     /// winning bets.
     async fn settle(&self, market: &Market, settled: &[Bet]) -> Result<(), RepositoryError>;
+
+    /// Finds a bet by its ID.
+    async fn find_by_id(&self, id: BetId) -> Result<Option<Bet>, RepositoryError>;
 
     async fn find_by_user(
         &self,

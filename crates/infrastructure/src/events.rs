@@ -12,8 +12,10 @@ mod chat_broadcaster;
 mod in_memory_bus;
 mod outbox;
 mod price_broadcaster;
+mod bet_broadcaster;
 mod user_cache;
 
+pub use bet_broadcaster::BetPlacedBroadcaster;
 pub use chat_broadcaster::ChatMessageBroadcaster;
 pub use in_memory_bus::InMemoryEventBus;
 pub use outbox::{publish, OutboxProcessor};

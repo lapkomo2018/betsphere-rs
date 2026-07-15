@@ -14,7 +14,9 @@
 mod user;
 mod market;
 mod chat;
+mod bet;
 
+pub use bet::BetPlaced;
 pub use chat::ChatMessagePosted;
 pub use market::MarketPricesUpdated;
 pub use user::UserBalanceChanged;
@@ -49,6 +51,7 @@ pub(crate) mod tests {
             UserBalanceChanged::TOPIC,
             MarketPricesUpdated::TOPIC,
             ChatMessagePosted::TOPIC,
+            BetPlaced::TOPIC,
         ];
         let unique: std::collections::HashSet<_> = topics.iter().collect();
         assert_eq!(unique.len(), topics.len());

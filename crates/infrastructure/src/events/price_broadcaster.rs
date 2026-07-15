@@ -46,8 +46,8 @@ impl EventHandler<MarketPricesUpdated> for PriceUpdateBroadcaster {
         let ticks: Vec<PriceTick> = outcomes
             .iter()
             .map(|o| PriceTick {
-                outcome_id: o.id().as_uuid(),
-                price: o.current_price().as_fraction(),
+                outcome_id: o.id(),
+                price: o.current_price(),
                 recorded_at,
             })
             .collect();
@@ -65,7 +65,7 @@ mod tests {
 
     use futures::StreamExt;
 
-    use domain::entities::{Market, Outcome};
+    use domain::entities::{Market, Outcome, OutcomeId};
     use domain::repositories::MarketRepository as _;
     use domain::value_objects::market::{MarketTitle, OutcomeLabel, Price};
 
@@ -111,14 +111,14 @@ mod tests {
             .unwrap();
 
         let broadcast = feed.next().await.unwrap();
-        let prices: HashMap<uuid::Uuid, f64> = broadcast
+        let prices: HashMap<OutcomeId, f64> = broadcast
             .ticks
             .iter()
-            .map(|t| (t.outcome_id, t.price))
+            .map(|t| (t.outcome_id, t.price.as_fraction()))
             .collect();
         assert_eq!(prices.len(), 2);
-        assert_eq!(prices[&outcomes[0].id().as_uuid()], 0.25);
-        assert_eq!(prices[&outcomes[1].id().as_uuid()], 0.75);
+        assert_eq!(prices[&outcomes[0].id()], 0.25);
+        assert_eq!(prices[&outcomes[1].id()], 0.75);
     }
 
     #[tokio::test]

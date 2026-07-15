@@ -62,10 +62,10 @@ impl EventHandler<ChatMessagePosted> for ChatMessageBroadcaster {
         };
 
         let broadcast = ChatMessageBroadcast {
-            id: message.id().as_uuid(),
+            id: message.id(),
             author: ChatAuthor {
-                id: author.id().as_uuid(),
-                username: author.username().to_string(),
+                id: author.id(),
+                username: author.username().clone(),
                 avatar_url: author.avatar_url().map(str::to_owned),
             },
             body: message.body().as_str().to_owned(),
@@ -123,9 +123,9 @@ mod tests {
             .unwrap();
 
         let broadcast = feed.next().await.unwrap();
-        assert_eq!(broadcast.id, message.id().as_uuid());
+        assert_eq!(broadcast.id, message.id());
         assert_eq!(broadcast.body, "hello");
-        assert_eq!(broadcast.author.username, "alice");
+        assert_eq!(broadcast.author.username, Username::new("alice").unwrap());
     }
 
     #[tokio::test]

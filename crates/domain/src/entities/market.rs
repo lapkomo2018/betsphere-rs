@@ -1,8 +1,8 @@
 use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
-use crate::DomainError;
 use crate::value_objects::market::{MarketTitle, OutcomeLabel, Price};
+use crate::DomainError;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct MarketId(Uuid);
@@ -41,7 +41,7 @@ impl From<MarketId> for Uuid {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct OutcomeId(Uuid);
 
 impl OutcomeId {

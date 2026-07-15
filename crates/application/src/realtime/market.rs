@@ -1,16 +1,14 @@
-use chrono::{DateTime, Utc};
-use domain::entities::MarketId;
-use serde::{Deserialize, Serialize};
-use uuid::Uuid;
-
 use crate::ports::Broadcast;
+use chrono::{DateTime, Utc};
+use domain::entities::{MarketId, OutcomeId};
+use domain::value_objects::market::Price;
+use serde::{Deserialize, Serialize};
 
 /// One outcome's price at a moment in time.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PriceTick {
-    pub outcome_id: Uuid,
-    /// Implied probability in `[0.0, 1.0]`, as in the REST market responses.
-    pub price: f64,
+    pub outcome_id: OutcomeId,
+    pub price: Price,
     pub recorded_at: DateTime<Utc>,
 }
 

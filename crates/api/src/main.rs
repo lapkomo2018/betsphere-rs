@@ -12,17 +12,18 @@ use std::sync::Arc;
 
 use infrastructure::auth::{Argon2PasswordHasher, JwtAccessTokens};
 use infrastructure::events::{
-    ChatMessageBroadcaster, OutboxProcessor, PriceUpdateBroadcaster, UserCacheInvalidator,
+    BetPlacedBroadcaster, ChatMessageBroadcaster, OutboxProcessor, PriceUpdateBroadcaster,
+    UserCacheInvalidator,
 };
 use infrastructure::messaging::RedisMessageBroker;
 use infrastructure::persistence::postgres::{
-    self, PgBetRepository, PgChatMessageRepository, PgMarketRepository, PgRefreshTokenRepository,
-    PgUnitOfWork, PgUserRepository, run_migrations,
+    self, run_migrations, PgBetRepository, PgChatMessageRepository, PgMarketRepository,
+    PgRefreshTokenRepository, PgUnitOfWork, PgUserRepository,
 };
 use infrastructure::persistence::redis::{self, CachedUserRepository};
 use infrastructure::storage::LocalFileStorage;
-use tower_http::LatencyUnit;
 use tower_http::trace::{DefaultOnResponse, TraceLayer};
+use tower_http::LatencyUnit;
 use tracing::Level;
 use tracing_subscriber::EnvFilter;
 
@@ -70,6 +71,7 @@ async fn main() {
     // the user cache in sync and to broadcast to live WebSocket subscribers.
     let outbox = OutboxProcessor::new(pool.clone())
         .with_handler(UserCacheInvalidator::new(users.clone()))
+        .with_handler(BetPlacedBroadcaster::new(bets.clone(), broker.clone()))
         .with_handler(PriceUpdateBroadcaster::new(markets.clone(), broker.clone()))
         .with_handler(ChatMessageBroadcaster::new(
             chat_messages.clone(),
@@ -106,6 +108,7 @@ async fn main() {
             chat_messages,
             users.clone(),
             markets.clone(),
+            bets.clone(),
             access_tokens,
             broker,
         ),

@@ -6,8 +6,8 @@ use crate::extract::CurrentUser;
 use crate::state::{AppState, ChatState, HISTORY_LIMIT};
 use application::realtime::ChatMessageBroadcast;
 use application::use_cases::chat::ChatMessageView;
-use axum::Json;
 use axum::extract::{Query, State};
+use axum::Json;
 use chrono::{DateTime, Utc};
 use domain::entities::ChatChannel;
 use serde::{Deserialize, Serialize};
@@ -57,10 +57,10 @@ impl From<&ChatMessageView> for ChatMessageResponse {
 impl From<ChatMessageBroadcast> for ChatMessageResponse {
     fn from(broadcast: ChatMessageBroadcast) -> Self {
         Self {
-            id: broadcast.id,
+            id: broadcast.id.as_uuid(),
             author: MessageAuthor {
-                id: broadcast.author.id,
-                username: broadcast.author.username,
+                id: broadcast.author.id.as_uuid(),
+                username: broadcast.author.username.to_string(),
                 avatar_url: broadcast.author.avatar_url,
             },
             body: broadcast.body,

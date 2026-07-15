@@ -3,8 +3,8 @@ use chrono::{DateTime, Utc};
 use sqlx::{PgPool, QueryBuilder};
 use uuid::Uuid;
 
-use domain::entities::{Bet, BetStatus, Market, MarketId, Outcome, PricePoint, UserId};
-use domain::events::{MarketPricesUpdated, UserBalanceChanged};
+use domain::entities::{Bet, BetId, BetStatus, Market, MarketId, Outcome, PricePoint, UserId};
+use domain::events::{BetPlaced, MarketPricesUpdated, UserBalanceChanged};
 use domain::repositories::{BetFilter, BetRepository, BetSort, RepositoryError, UserStats};
 use domain::value_objects::market::Price;
 
@@ -195,6 +195,15 @@ impl BetRepository for PgBetRepository {
         )
             .await?;
 
+        // Likewise for the newly committed bet, which powers live bet feeds.
+        publish(
+            &mut *tx,
+            &BetPlaced {
+                bet_id: bet.id(),
+            },
+        )
+            .await?;
+
         // Likewise for the price move, which live market feeds broadcast.
         publish(
             &mut *tx,
@@ -263,6 +272,17 @@ impl BetRepository for PgBetRepository {
         }
 
         tx.commit().await.map_err(map_sqlx_err)
+    }
+
+    async fn find_by_id(&self, id: BetId) -> Result<Option<Bet>, RepositoryError> {
+        let query = format!("SELECT {BET_COLUMNS} FROM bets WHERE id = $1");
+        sqlx::query_as::<_, BetRow>(&query)
+            .bind(id.as_uuid())
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(map_sqlx_err)?
+            .map(Bet::try_from)
+            .transpose()
     }
 
     async fn find_by_user(

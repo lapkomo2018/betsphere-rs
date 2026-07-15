@@ -3,8 +3,8 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use tokio::sync::RwLock;
 
-use domain::entities::{Bet, BetStatus, Market, MarketId, Outcome, PricePoint, UserId};
-use domain::events::{Event, MarketPricesUpdated, UserBalanceChanged};
+use domain::entities::{Bet, BetId, BetStatus, Market, MarketId, Outcome, PricePoint, UserId};
+use domain::events::{BetPlaced, Event, MarketPricesUpdated, UserBalanceChanged};
 use domain::repositories::{
     BetFilter, BetRepository, BetSort, MarketRepository, RepositoryError, UserRepository, UserStats,
 };
@@ -112,11 +112,15 @@ impl BetRepository for InMemoryBetRepository {
         self.dispatch(UserBalanceChanged {
             user_id: bet.user_id(),
         })
-        .await;
+            .await;
+        self.dispatch(BetPlaced {
+            bet_id: bet.id(),
+        })
+            .await;
         self.dispatch(MarketPricesUpdated {
             market_id: bet.market_id(),
         })
-        .await;
+            .await;
         Ok(())
     }
 
@@ -160,6 +164,17 @@ impl BetRepository for InMemoryBetRepository {
             self.dispatch(UserBalanceChanged { user_id }).await;
         }
         Ok(())
+    }
+
+    async fn find_by_id(&self, id: BetId) -> Result<Option<Bet>, RepositoryError> {
+        let bet = self
+            .bets
+            .read()
+            .await
+            .iter()
+            .find(|b| b.id() == id)
+            .cloned();
+        Ok(bet)
     }
 
     async fn find_by_user(
@@ -266,7 +281,7 @@ mod tests {
             amount,
             f.outcomes[0].current_price(),
         )
-        .unwrap();
+            .unwrap();
         let mut priced = f.outcomes.clone();
         priced[0].add_volume(amount);
         pricing::recalculate_prices(&mut priced);

@@ -9,7 +9,9 @@
 
 mod market;
 mod chat;
+mod bet;
 
+pub use bet::BetPlacedBroadcast;
 pub use chat::{ChatAuthor, ChatMessageBroadcast};
 pub use market::{PriceTick, PriceUpdateBroadcast};
 

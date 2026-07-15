@@ -6,7 +6,8 @@ use crate::DomainError;
 /// The codebase deliberately avoids floating point for anything money-adjacent
 /// (balances are `i64` minimal units); prices follow suit. A `Price` of
 /// `10_000` means 1.0000, `5_000` means 0.5000, and `0` means 0.0000.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
+#[serde(try_from = "i32", into = "i32")]
 pub struct Price(i32);
 
 impl Price {
@@ -48,6 +49,22 @@ impl Price {
     }
 }
 
+/// Serde route: deserializing re-validates, so a wire payload can never
+/// materialize an out-of-range price.
+impl TryFrom<i32> for Price {
+    type Error = DomainError;
+
+    fn try_from(value: i32) -> Result<Self, Self::Error> {
+        Self::from_ten_thousandths(value)
+    }
+}
+
+impl From<Price> for i32 {
+    fn from(price: Price) -> Self {
+        price.0
+    }
+}
+
 impl std::fmt::Display for Price {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         // Four decimal places, matching the NUMERIC(6,4) presentation.
@@ -72,5 +89,18 @@ mod tests {
         let half = Price::from_ten_thousandths(5_000).unwrap();
         assert_eq!(half.as_fraction(), 0.5);
         assert_eq!(half.to_string(), "0.5000");
+    }
+
+    #[test]
+    fn serde_round_trips_as_bare_ten_thousandths() {
+        let half = Price::from_ten_thousandths(5_000).unwrap();
+        assert_eq!(serde_json::to_string(&half).unwrap(), "5000");
+        assert_eq!(serde_json::from_str::<Price>("5000").unwrap(), half);
+    }
+
+    #[test]
+    fn serde_rejects_out_of_range() {
+        assert!(serde_json::from_str::<Price>("-1").is_err());
+        assert!(serde_json::from_str::<Price>("10001").is_err());
     }
 }

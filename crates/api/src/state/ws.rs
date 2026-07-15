@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use application::ports::{AccessTokenService, MessageBroker};
 use application::use_cases::chat::{ListRecentMessages, PostMessage};
-use domain::repositories::{ChatMessageRepository, MarketRepository, UserRepository};
+use domain::repositories::{BetRepository, ChatMessageRepository, MarketRepository, UserRepository};
 
 /// State of the general WebSocket endpoint, which multiplexes every real-time
 /// stream (chat rooms, market feeds) over one socket.
@@ -13,6 +13,8 @@ pub struct WsState {
     /// Market lookups for feed subscriptions: the existence check and the
     /// price snapshot sent on subscribe.
     pub markets: Arc<dyn MarketRepository>,
+    /// Bet lookups for bet-feed subscriptions: the history sent on subscribe.
+    pub bets: Arc<dyn BetRepository>,
     /// Verifies the access token passed as a WebSocket query parameter, since
     /// browsers cannot set the `Authorization` header on the WS handshake.
     pub access_tokens: Arc<dyn AccessTokenService>,
@@ -28,6 +30,7 @@ impl WsState {
         messages: Arc<dyn ChatMessageRepository>,
         users: Arc<dyn UserRepository>,
         markets: Arc<dyn MarketRepository>,
+        bets: Arc<dyn BetRepository>,
         access_tokens: Arc<dyn AccessTokenService>,
         broker: Arc<dyn MessageBroker>,
     ) -> Self {
@@ -39,6 +42,7 @@ impl WsState {
             )),
             list_recent: Arc::new(ListRecentMessages::new(messages, users, markets.clone())),
             markets,
+            bets,
             access_tokens,
             broker,
         }

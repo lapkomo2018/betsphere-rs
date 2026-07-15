@@ -1,23 +1,22 @@
-use chrono::{DateTime, Utc};
-use domain::entities::ChatChannel;
-use serde::{Deserialize, Serialize};
-use uuid::Uuid;
-
 use crate::ports::Broadcast;
+use chrono::{DateTime, Utc};
+use domain::entities::{ChatChannel, MessageId, UserId};
+use domain::value_objects::user::Username;
+use serde::{Deserialize, Serialize};
 
 /// The author fields carried by a [`ChatMessageBroadcast`] (public profile
 /// only).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChatAuthor {
-    pub id: Uuid,
-    pub username: String,
+    pub id: UserId,
+    pub username: Username,
     pub avatar_url: Option<String>,
 }
 
 /// A chat message enriched with its author's profile, broadcast when posted.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChatMessageBroadcast {
-    pub id: Uuid,
+    pub id: MessageId,
     pub author: ChatAuthor,
     pub body: String,
     pub created_at: DateTime<Utc>,
