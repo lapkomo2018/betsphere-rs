@@ -34,6 +34,30 @@ impl Default for BetFilter {
     }
 }
 
+/// Aggregated betting record of one user, computed over every bet they have
+/// placed. Refunded bets count toward totals but neither wins nor losses.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct UserStats {
+    pub total_bets: i64,
+    pub wins: i64,
+    pub losses: i64,
+    /// Sum of every stake, in minimal currency units.
+    pub total_volume: i64,
+}
+
+impl UserStats {
+    /// Share of settled bets that won: `wins / (wins + losses)`.
+    /// Zero while nothing has settled.
+    pub fn win_rate(&self) -> f64 {
+        let settled = self.wins + self.losses;
+        if settled == 0 {
+            0.0
+        } else {
+            self.wins as f64 / settled as f64
+        }
+    }
+}
+
 /// Port for bet persistence. Placing and settling bets move balances and
 /// market aggregates together, so implementations must make [`place`](Self::place)
 /// and [`settle`](Self::settle) atomic — partial application would corrupt
@@ -74,4 +98,28 @@ pub trait BetRepository: Send + Sync {
 
     /// The global bet feed across all markets.
     async fn feed(&self, filter: &BetFilter) -> Result<Vec<Bet>, RepositoryError>;
+
+    /// Aggregated stats over every bet the user has placed.
+    async fn stats_for_user(&self, user_id: UserId) -> Result<UserStats, RepositoryError>;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn win_rate_is_wins_over_settled() {
+        let stats = UserStats {
+            total_bets: 5,
+            wins: 3,
+            losses: 1,
+            total_volume: 500,
+        };
+        assert_eq!(stats.win_rate(), 0.75);
+    }
+
+    #[test]
+    fn win_rate_is_zero_with_no_settled_bets() {
+        assert_eq!(UserStats::default().win_rate(), 0.0);
+    }
 }

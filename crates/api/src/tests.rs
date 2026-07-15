@@ -57,7 +57,7 @@ fn test_env() -> (Router, Arc<InMemoryMarketRepository>) {
             Duration::days(1),
             false,
         ),
-        users: UserState::new(users.clone(), storage.clone()),
+        users: UserState::new(users.clone(), bets.clone(), storage.clone()),
         files: FileState::new(storage),
         chat: ChatState::new(
             chat_messages,
@@ -387,6 +387,38 @@ async fn placing_a_bet_requires_auth() {
         .unwrap();
     let response = app.oneshot(request).await.unwrap();
     assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn profile_stats_reflect_placed_bets() {
+    let (app, markets) = test_env();
+    let (market_id, yes_id) = seed_market(&markets).await;
+    let token = register(&app).await;
+
+    let response = post_bet(&app, &token, market_id, yes_id, 1_000).await;
+    assert_eq!(response.status(), StatusCode::CREATED);
+
+    let request = Request::get("/api/users/me")
+        .header(header::AUTHORIZATION, format!("Bearer {token}"))
+        .body(Body::empty())
+        .unwrap();
+    let me = body_json(app.clone().oneshot(request).await.unwrap()).await;
+    assert_eq!(me["stats"]["total_bets"], 1);
+    assert_eq!(me["stats"]["total_volume"], 1_000);
+
+    // The public profile carries the same stats but no balance or email.
+    let id = me["id"].as_str().unwrap();
+    let request = Request::get(format!("/api/users/{id}"))
+        .body(Body::empty())
+        .unwrap();
+    let profile = body_json(app.clone().oneshot(request).await.unwrap()).await;
+    assert_eq!(profile["stats"]["total_bets"], 1);
+    assert_eq!(profile["stats"]["total_volume"], 1_000);
+    assert_eq!(profile["stats"]["wins"], 0);
+    assert_eq!(profile["stats"]["losses"], 0);
+    assert_eq!(profile["stats"]["win_rate"], 0.0);
+    assert!(profile.get("balance").is_none());
+    assert!(profile.get("email").is_none());
 }
 
 #[tokio::test]

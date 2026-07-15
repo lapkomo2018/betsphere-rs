@@ -88,7 +88,7 @@ async fn main() {
             config.auth.refresh_ttl,
             config.auth.cookie_secure,
         ),
-        users: UserState::new(users.clone(), storage.clone()),
+        users: UserState::new(users.clone(), bets.clone(), storage.clone()),
         files: FileState::new(storage),
         chat: ChatState::new(chat_messages, users.clone(), access_tokens, broker),
         markets: MarketState::new(markets.clone(), bets.clone()),

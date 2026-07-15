@@ -12,7 +12,7 @@ use utoipa_axum::routes;
 
 use crate::error::{ApiError, ErrorResponse};
 use crate::routes::users::PrivateUserResponse;
-use crate::state::{AppState, AuthState};
+use crate::state::{AppState, AuthState, UserState};
 
 /// Cookie carrying the refresh token. Scoped to the auth endpoints so the
 /// browser never sends it anywhere else.
@@ -54,13 +54,13 @@ struct AuthResponse {
     user: PrivateUserResponse,
 }
 
-impl From<&AuthSession> for AuthResponse {
-    fn from(session: &AuthSession) -> Self {
-        Self {
-            access_token: session.access_token.clone(),
-            user: PrivateUserResponse::from(&session.user),
-        }
-    }
+/// Builds the response body, joining the user's betting stats onto the profile.
+async fn auth_response(users: &UserState, session: &AuthSession) -> Result<AuthResponse, ApiError> {
+    let stats = users.get_user_stats.execute(session.user.id()).await?;
+    Ok(AuthResponse {
+        access_token: session.access_token.clone(),
+        user: PrivateUserResponse::new(&session.user, stats),
+    })
 }
 
 // --- Cookie helpers ---
@@ -99,6 +99,7 @@ fn removal_cookie() -> Cookie<'static> {
 )]
 async fn register(
     State(state): State<AuthState>,
+    State(users): State<UserState>,
     jar: CookieJar,
     Json(body): Json<RegisterRequest>,
 ) -> Result<(StatusCode, CookieJar, Json<AuthResponse>), ApiError> {
@@ -111,8 +112,9 @@ async fn register(
         })
         .await?;
 
+    let response = auth_response(&users, &session).await?;
     let jar = jar.add(refresh_cookie(&session, state.cookie_secure));
-    Ok((StatusCode::CREATED, jar, Json(AuthResponse::from(&session))))
+    Ok((StatusCode::CREATED, jar, Json(response)))
 }
 
 #[utoipa::path(
@@ -127,6 +129,7 @@ async fn register(
 )]
 async fn login(
     State(state): State<AuthState>,
+    State(users): State<UserState>,
     jar: CookieJar,
     Json(body): Json<LoginRequest>,
 ) -> Result<(CookieJar, Json<AuthResponse>), ApiError> {
@@ -138,8 +141,9 @@ async fn login(
         })
         .await?;
 
+    let response = auth_response(&users, &session).await?;
     let jar = jar.add(refresh_cookie(&session, state.cookie_secure));
-    Ok((jar, Json(AuthResponse::from(&session))))
+    Ok((jar, Json(response)))
 }
 
 #[utoipa::path(
@@ -153,6 +157,7 @@ async fn login(
 )]
 async fn refresh(
     State(state): State<AuthState>,
+    State(users): State<UserState>,
     jar: CookieJar,
 ) -> Result<(CookieJar, Json<AuthResponse>), ApiError> {
     let token = jar
@@ -162,8 +167,9 @@ async fn refresh(
 
     let session = state.refresh_session.execute(&token).await?;
 
+    let response = auth_response(&users, &session).await?;
     let jar = jar.add(refresh_cookie(&session, state.cookie_secure));
-    Ok((jar, Json(AuthResponse::from(&session))))
+    Ok((jar, Json(response)))
 }
 
 #[utoipa::path(

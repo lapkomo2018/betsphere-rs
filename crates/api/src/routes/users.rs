@@ -5,6 +5,7 @@ use axum::extract::{DefaultBodyLimit, Multipart, Path, Query, State};
 use chrono::{DateTime, Utc};
 use domain::DomainError;
 use domain::entities::{User, UserId};
+use domain::repositories::UserStats;
 use serde::Serialize;
 use utoipa::ToSchema;
 use utoipa_axum::router::OpenApiRouter;
@@ -28,6 +29,29 @@ pub fn router() -> OpenApiRouter<AppState> {
 
 // --- DTOs ---
 
+/// Aggregated betting record, shown on every profile.
+#[derive(Debug, Serialize, ToSchema)]
+struct UserStatsResponse {
+    total_bets: i64,
+    wins: i64,
+    losses: i64,
+    /// `wins / (wins + losses)`; 0 while nothing has settled.
+    win_rate: f64,
+    total_volume: i64,
+}
+
+impl From<UserStats> for UserStatsResponse {
+    fn from(stats: UserStats) -> Self {
+        Self {
+            total_bets: stats.total_bets,
+            wins: stats.wins,
+            losses: stats.losses,
+            win_rate: stats.win_rate(),
+            total_volume: stats.total_volume,
+        }
+    }
+}
+
 /// Full profile, returned only to the account owner.
 #[derive(Debug, Serialize, ToSchema)]
 pub(super) struct PrivateUserResponse {
@@ -37,12 +61,13 @@ pub(super) struct PrivateUserResponse {
     avatar_url: Option<String>,
     balance: i64,
     role: String,
+    stats: UserStatsResponse,
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
 }
 
-impl From<&User> for PrivateUserResponse {
-    fn from(user: &User) -> Self {
+impl PrivateUserResponse {
+    pub(super) fn new(user: &User, stats: UserStats) -> Self {
         Self {
             id: user.id().as_uuid(),
             username: user.username().to_string(),
@@ -50,6 +75,7 @@ impl From<&User> for PrivateUserResponse {
             avatar_url: user.avatar_url().map(str::to_owned),
             balance: user.balance(),
             role: user.role().to_string(),
+            stats: stats.into(),
             created_at: user.created_at(),
             updated_at: user.updated_at(),
         }
@@ -62,15 +88,17 @@ struct PublicUserResponse {
     id: Uuid,
     username: String,
     avatar_url: Option<String>,
+    stats: UserStatsResponse,
     created_at: DateTime<Utc>,
 }
 
-impl From<&User> for PublicUserResponse {
-    fn from(user: &User) -> Self {
+impl PublicUserResponse {
+    fn new(user: &User, stats: UserStats) -> Self {
         Self {
             id: user.id().as_uuid(),
             username: user.username().to_string(),
             avatar_url: user.avatar_url().map(str::to_owned),
+            stats: stats.into(),
             created_at: user.created_at(),
         }
     }
@@ -102,7 +130,8 @@ async fn get_me(
     CurrentUser(claims): CurrentUser,
 ) -> Result<Json<PrivateUserResponse>, ApiError> {
     let user = state.get_user.execute(claims.user_id.as_uuid()).await?;
-    Ok(Json(PrivateUserResponse::from(&user)))
+    let stats = state.get_user_stats.execute(user.id()).await?;
+    Ok(Json(PrivateUserResponse::new(&user, stats)))
 }
 
 #[utoipa::path(
@@ -120,7 +149,8 @@ async fn get_user(
     Path(id): Path<Uuid>,
 ) -> Result<Json<PublicUserResponse>, ApiError> {
     let user = state.get_user.execute(id).await?;
-    Ok(Json(PublicUserResponse::from(&user)))
+    let stats = state.get_user_stats.execute(user.id()).await?;
+    Ok(Json(PublicUserResponse::new(&user, stats)))
 }
 
 #[utoipa::path(
@@ -192,5 +222,6 @@ async fn upload_avatar(
         .upload_avatar
         .execute(claims.user_id, &content_type, &bytes)
         .await?;
-    Ok(Json(PrivateUserResponse::from(&user)))
+    let stats = state.get_user_stats.execute(user.id()).await?;
+    Ok(Json(PrivateUserResponse::new(&user, stats)))
 }

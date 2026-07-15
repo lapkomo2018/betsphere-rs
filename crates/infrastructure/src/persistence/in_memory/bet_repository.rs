@@ -3,9 +3,9 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use tokio::sync::RwLock;
 
-use domain::entities::{Bet, Market, MarketId, Outcome, PricePoint, UserId};
+use domain::entities::{Bet, BetStatus, Market, MarketId, Outcome, PricePoint, UserId};
 use domain::repositories::{
-    BetFilter, BetRepository, BetSort, MarketRepository, RepositoryError, UserRepository,
+    BetFilter, BetRepository, BetSort, MarketRepository, RepositoryError, UserRepository, UserStats,
 };
 
 use super::{InMemoryMarketRepository, InMemoryUserRepository};
@@ -100,9 +100,7 @@ impl BetRepository for InMemoryBetRepository {
             .read()
             .await
             .iter()
-            .filter(|b| {
-                b.market_id() == market_id && b.status() == domain::entities::BetStatus::Active
-            })
+            .filter(|b| b.market_id() == market_id && b.status() == BetStatus::Active)
             .cloned()
             .collect())
     }
@@ -146,12 +144,32 @@ impl BetRepository for InMemoryBetRepository {
     async fn feed(&self, filter: &BetFilter) -> Result<Vec<Bet>, RepositoryError> {
         self.filtered(|_| true, filter).await
     }
+
+    async fn stats_for_user(&self, user_id: UserId) -> Result<UserStats, RepositoryError> {
+        let mut stats = UserStats::default();
+        for bet in self
+            .bets
+            .read()
+            .await
+            .iter()
+            .filter(|b| b.user_id() == user_id)
+        {
+            stats.total_bets += 1;
+            stats.total_volume += bet.amount();
+            match bet.status() {
+                BetStatus::Won => stats.wins += 1,
+                BetStatus::Lost => stats.losses += 1,
+                BetStatus::Active | BetStatus::Refunded => {}
+            }
+        }
+        Ok(stats)
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use domain::entities::{BetStatus, Market, Outcome, User};
+    use domain::entities::{Market, Outcome, User};
     use domain::services::pricing;
     use domain::value_objects::market::{MarketTitle, OutcomeLabel, Price};
     use domain::value_objects::user::{Email, PasswordHash, Username};
@@ -272,5 +290,39 @@ mod tests {
         let stored = &f.repo.feed(&BetFilter::default()).await.unwrap()[0];
         assert_eq!(stored.status(), BetStatus::Won);
         assert_eq!(stored.payout(), Some(2_000));
+    }
+
+    #[tokio::test]
+    async fn stats_aggregate_the_users_bets() {
+        let f = fixture().await;
+        let (bet, priced, points) = placement(&f, 1_000);
+        f.repo.place(&bet, &priced, &points).await.unwrap();
+
+        // One active bet: counted in totals, not yet won or lost.
+        let stats = f.repo.stats_for_user(f.user.id()).await.unwrap();
+        assert_eq!(
+            stats,
+            UserStats {
+                total_bets: 1,
+                wins: 0,
+                losses: 0,
+                total_volume: 1_000,
+            }
+        );
+        assert_eq!(stats.win_rate(), 0.0);
+
+        let mut market = f.markets.find_by_id(f.market.id()).await.unwrap().unwrap();
+        market.resolve(f.outcomes[0].id()).unwrap();
+        let mut settled = f.repo.active_for_market(f.market.id()).await.unwrap();
+        settled[0].settle_as_winner().unwrap();
+        f.repo.settle(&market, &settled).await.unwrap();
+
+        let stats = f.repo.stats_for_user(f.user.id()).await.unwrap();
+        assert_eq!(stats.wins, 1);
+        assert_eq!(stats.win_rate(), 1.0);
+
+        // Another user's stats stay empty.
+        let stranger = f.repo.stats_for_user(UserId::new()).await.unwrap();
+        assert_eq!(stranger, UserStats::default());
     }
 }

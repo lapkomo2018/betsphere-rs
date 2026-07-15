@@ -5,7 +5,7 @@ use uuid::Uuid;
 
 use domain::entities::{Bet, BetStatus, Market, MarketId, Outcome, PricePoint, UserId};
 use domain::events::DomainEvent;
-use domain::repositories::{BetFilter, BetRepository, BetSort, RepositoryError};
+use domain::repositories::{BetFilter, BetRepository, BetSort, RepositoryError, UserStats};
 use domain::value_objects::market::Price;
 
 use super::map_sqlx_err;
@@ -276,5 +276,28 @@ impl BetRepository for PgBetRepository {
 
     async fn feed(&self, filter: &BetFilter) -> Result<Vec<Bet>, RepositoryError> {
         self.list(None, filter).await
+    }
+
+    async fn stats_for_user(&self, user_id: UserId) -> Result<UserStats, RepositoryError> {
+        // SUM(BIGINT) yields NUMERIC in Postgres, hence the cast back.
+        let (total_bets, wins, losses, total_volume): (i64, i64, i64, i64) = sqlx::query_as(
+            "SELECT COUNT(*),
+                    COUNT(*) FILTER (WHERE status = $2),
+                    COUNT(*) FILTER (WHERE status = $3),
+                    COALESCE(SUM(amount), 0)::BIGINT
+             FROM bets WHERE user_id = $1",
+        )
+            .bind(user_id.as_uuid())
+            .bind(BetStatus::Won.as_str())
+            .bind(BetStatus::Lost.as_str())
+            .fetch_one(&self.pool)
+            .await
+            .map_err(map_sqlx_err)?;
+        Ok(UserStats {
+            total_bets,
+            wins,
+            losses,
+            total_volume,
+        })
     }
 }
