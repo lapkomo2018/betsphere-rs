@@ -6,7 +6,7 @@ mod refresh_token;
 mod user;
 
 pub use bet::{Bet, BetId, BetStatus};
-pub use chat_message::{ChatMessage, MessageId};
+pub use chat_message::{ChatChannel, ChatMessage, MessageId};
 pub use market::{Market, MarketId, MarketStatus, Outcome, OutcomeId};
 pub use price_history::PricePoint;
 pub use refresh_token::RefreshToken;

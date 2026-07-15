@@ -15,7 +15,7 @@ use axum::extract::FromRef;
 
 pub use auth::AuthState;
 pub use bet::BetState;
-pub use chat::{ChatState, GLOBAL_CHANNEL, HISTORY_LIMIT};
+pub use chat::{ChatState, HISTORY_LIMIT};
 pub use file::FileState;
 pub use market::MarketState;
 pub use user::UserState;

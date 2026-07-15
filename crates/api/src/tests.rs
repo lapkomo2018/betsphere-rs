@@ -62,6 +62,7 @@ fn test_env() -> (Router, Arc<InMemoryMarketRepository>) {
         chat: ChatState::new(
             chat_messages,
             users.clone(),
+            markets.clone(),
             access_tokens,
             Arc::new(InMemoryMessageBroker::new()),
         ),
@@ -204,6 +205,26 @@ where
     }
 }
 
+/// Sends a subscribe frame and asserts the history frame that answers it,
+/// returning its `data` array.
+async fn subscribe<S>(ws: &mut S, channel: &str) -> serde_json::Value
+where
+    S: StreamExt<Item = Result<WsMessage, tokio_tungstenite::tungstenite::Error>>
+        + SinkExt<WsMessage>
+        + Unpin,
+    <S as futures::Sink<WsMessage>>::Error: std::fmt::Debug,
+{
+    ws.send(WsMessage::text(format!(
+        r#"{{"type":"subscribe","channel":"{channel}"}}"#
+    )))
+    .await
+    .unwrap();
+    let value: serde_json::Value = serde_json::from_str(&next_text(ws).await).unwrap();
+    assert_eq!(value["type"], "history", "unexpected frame: {value}");
+    assert_eq!(value["channel"], channel);
+    value["data"].clone()
+}
+
 #[tokio::test]
 async fn chat_ws_posts_and_echoes_message() {
     let app = test_app();
@@ -213,15 +234,22 @@ async fn chat_ws_posts_and_echoes_message() {
     let url = format!("ws://{addr}/api/chat/ws?token={token}");
     let (mut ws, _) = connect_async(url).await.unwrap();
 
-    ws.send(WsMessage::text(r#"{"body":"hello world"}"#))
-        .await
-        .unwrap();
+    let history = subscribe(&mut ws, "global_chat").await;
+    assert_eq!(history, serde_json::json!([]));
+
+    ws.send(WsMessage::text(
+        r#"{"type":"chat_message","channel":"global_chat","body":"hello world"}"#,
+    ))
+    .await
+    .unwrap();
 
     let value: serde_json::Value = serde_json::from_str(&next_text(&mut ws).await).unwrap();
-    assert_eq!(value["body"], "hello world");
-    assert_eq!(value["author"]["username"], "alice");
-    assert!(value["id"].is_string());
-    assert!(value["created_at"].is_string());
+    assert_eq!(value["type"], "chat_message");
+    assert_eq!(value["channel"], "global_chat");
+    assert_eq!(value["data"]["body"], "hello world");
+    assert_eq!(value["data"]["author"]["username"], "alice");
+    assert!(value["data"]["id"].is_string());
+    assert!(value["data"]["created_at"].is_string());
 }
 
 #[tokio::test]
@@ -234,16 +262,65 @@ async fn chat_ws_replays_history_to_new_client() {
     // First client posts a message and waits for its own echo, which only
     // fires after the message is persisted.
     let (mut first, _) = connect_async(url.clone()).await.unwrap();
+    subscribe(&mut first, "global_chat").await;
     first
-        .send(WsMessage::text(r#"{"body":"earlier message"}"#))
+        .send(WsMessage::text(
+            r#"{"type":"chat_message","channel":"global_chat","body":"earlier message"}"#,
+        ))
         .await
         .unwrap();
     let _ = next_text(&mut first).await;
 
-    // A freshly connecting client receives that message as history.
+    // A freshly subscribing client receives that message as history.
     let (mut second, _) = connect_async(url).await.unwrap();
-    let value: serde_json::Value = serde_json::from_str(&next_text(&mut second).await).unwrap();
-    assert_eq!(value["body"], "earlier message");
+    let history = subscribe(&mut second, "global_chat").await;
+    assert_eq!(history[0]["body"], "earlier message");
+}
+
+#[tokio::test]
+async fn market_chat_is_scoped_to_its_market() {
+    let (app, markets) = test_env();
+    let (market_id, _) = seed_market(&markets).await;
+    let token = register(&app).await;
+    let addr = serve(app).await;
+    let url = format!("ws://{addr}/api/chat/ws?token={token}");
+
+    let market_channel = format!("market_chat:{market_id}");
+    let (mut ws, _) = connect_async(url.clone()).await.unwrap();
+    subscribe(&mut ws, &market_channel).await;
+    ws.send(WsMessage::text(format!(
+        r#"{{"type":"chat_message","channel":"{market_channel}","body":"market talk"}}"#
+    )))
+    .await
+    .unwrap();
+    let value: serde_json::Value = serde_json::from_str(&next_text(&mut ws).await).unwrap();
+    assert_eq!(value["channel"], market_channel.as_str());
+    assert_eq!(value["data"]["body"], "market talk");
+
+    // The market room's message does not leak into the global room.
+    let (mut global, _) = connect_async(url).await.unwrap();
+    let history = subscribe(&mut global, "global_chat").await;
+    assert_eq!(history, serde_json::json!([]));
+}
+
+#[tokio::test]
+async fn chat_ws_rejects_message_to_unknown_market() {
+    let app = test_app();
+    let token = register(&app).await;
+    let addr = serve(app).await;
+
+    let url = format!("ws://{addr}/api/chat/ws?token={token}");
+    let (mut ws, _) = connect_async(url).await.unwrap();
+
+    let ghost = uuid::Uuid::new_v4();
+    ws.send(WsMessage::text(format!(
+        r#"{{"type":"chat_message","channel":"market_chat:{ghost}","body":"anyone?"}}"#
+    )))
+    .await
+    .unwrap();
+
+    let value: serde_json::Value = serde_json::from_str(&next_text(&mut ws).await).unwrap();
+    assert_eq!(value["type"], "error");
 }
 
 #[tokio::test]

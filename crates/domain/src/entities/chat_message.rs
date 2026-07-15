@@ -1,8 +1,35 @@
 use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
-use crate::entities::UserId;
+use crate::entities::{MarketId, UserId};
 use crate::value_objects::chat::MessageBody;
+
+/// The room a chat message belongs to: the single global room or the
+/// discussion attached to one market.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ChatChannel {
+    Global,
+    Market(MarketId),
+}
+
+impl ChatChannel {
+    /// The market this channel is scoped to, or `None` for the global room.
+    pub fn market_id(&self) -> Option<MarketId> {
+        match self {
+            Self::Global => None,
+            Self::Market(id) => Some(*id),
+        }
+    }
+}
+
+impl From<Option<MarketId>> for ChatChannel {
+    fn from(market_id: Option<MarketId>) -> Self {
+        match market_id {
+            Some(id) => Self::Market(id),
+            None => Self::Global,
+        }
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct MessageId(Uuid);
@@ -41,21 +68,23 @@ impl From<MessageId> for Uuid {
     }
 }
 
-/// A single message posted to the global chat.
+/// A single message posted to one chat room (global or per-market).
 #[derive(Debug, Clone)]
 pub struct ChatMessage {
     id: MessageId,
     author_id: UserId,
+    channel: ChatChannel,
     body: MessageBody,
     created_at: DateTime<Utc>,
 }
 
 impl ChatMessage {
     /// Creates a brand-new message authored now.
-    pub fn new(author_id: UserId, body: MessageBody) -> Self {
+    pub fn new(author_id: UserId, channel: ChatChannel, body: MessageBody) -> Self {
         Self {
             id: MessageId::new(),
             author_id,
+            channel,
             body,
             created_at: Utc::now(),
         }
@@ -65,12 +94,14 @@ impl ChatMessage {
     pub fn from_parts(
         id: MessageId,
         author_id: UserId,
+        channel: ChatChannel,
         body: MessageBody,
         created_at: DateTime<Utc>,
     ) -> Self {
         Self {
             id,
             author_id,
+            channel,
             body,
             created_at,
         }
@@ -82,6 +113,10 @@ impl ChatMessage {
 
     pub fn author_id(&self) -> UserId {
         self.author_id
+    }
+
+    pub fn channel(&self) -> ChatChannel {
+        self.channel
     }
 
     pub fn body(&self) -> &MessageBody {
@@ -100,8 +135,19 @@ mod tests {
     #[test]
     fn new_message_gets_id_and_timestamp() {
         let author = UserId::new();
-        let message = ChatMessage::new(author, MessageBody::new("hi").unwrap());
+        let message =
+            ChatMessage::new(author, ChatChannel::Global, MessageBody::new("hi").unwrap());
         assert_eq!(message.author_id(), author);
+        assert_eq!(message.channel(), ChatChannel::Global);
         assert_eq!(message.body().as_str(), "hi");
+    }
+
+    #[test]
+    fn channel_round_trips_through_market_id() {
+        let market = MarketId::new();
+        assert_eq!(ChatChannel::Global.market_id(), None);
+        assert_eq!(ChatChannel::Market(market).market_id(), Some(market));
+        assert_eq!(ChatChannel::from(Some(market)), ChatChannel::Market(market));
+        assert_eq!(ChatChannel::from(None), ChatChannel::Global);
     }
 }

@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use tokio::sync::RwLock;
 
-use domain::entities::ChatMessage;
+use domain::entities::{ChatChannel, ChatMessage};
 use domain::repositories::{ChatMessageRepository, RepositoryError};
 
 /// Thread-safe in-memory chat store, ordered by insertion. Useful for
@@ -24,9 +24,17 @@ impl ChatMessageRepository for InMemoryChatMessageRepository {
         Ok(())
     }
 
-    async fn list_recent(&self, limit: i64) -> Result<Vec<ChatMessage>, RepositoryError> {
+    async fn list_recent(
+        &self,
+        channel: ChatChannel,
+        limit: i64,
+    ) -> Result<Vec<ChatMessage>, RepositoryError> {
         let messages = self.messages.read().await;
-        let mut recent: Vec<ChatMessage> = messages.clone();
+        let mut recent: Vec<ChatMessage> = messages
+            .iter()
+            .filter(|m| m.channel() == channel)
+            .cloned()
+            .collect();
         recent.sort_by_key(|m| m.created_at());
         let limit = limit.max(0) as usize;
         // Keep the newest `limit`, still oldest-first.
@@ -38,22 +46,42 @@ impl ChatMessageRepository for InMemoryChatMessageRepository {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use domain::entities::UserId;
+    use domain::entities::{MarketId, UserId};
     use domain::value_objects::chat::MessageBody;
 
-    fn message(text: &str) -> ChatMessage {
-        ChatMessage::new(UserId::new(), MessageBody::new(text).unwrap())
+    fn message(channel: ChatChannel, text: &str) -> ChatMessage {
+        ChatMessage::new(UserId::new(), channel, MessageBody::new(text).unwrap())
     }
 
     #[tokio::test]
     async fn list_recent_returns_newest_limited_oldest_first() {
         let repo = InMemoryChatMessageRepository::new();
         for text in ["a", "b", "c"] {
-            repo.save(&message(text)).await.unwrap();
+            repo.save(&message(ChatChannel::Global, text))
+                .await
+                .unwrap();
         }
 
-        let recent = repo.list_recent(2).await.unwrap();
+        let recent = repo.list_recent(ChatChannel::Global, 2).await.unwrap();
         let bodies: Vec<&str> = recent.iter().map(|m| m.body().as_str()).collect();
         assert_eq!(bodies, ["b", "c"]);
+    }
+
+    #[tokio::test]
+    async fn list_recent_scopes_to_the_requested_channel() {
+        let repo = InMemoryChatMessageRepository::new();
+        let market = ChatChannel::Market(MarketId::new());
+        repo.save(&message(ChatChannel::Global, "global"))
+            .await
+            .unwrap();
+        repo.save(&message(market, "market")).await.unwrap();
+
+        let global = repo.list_recent(ChatChannel::Global, 10).await.unwrap();
+        assert_eq!(global.len(), 1);
+        assert_eq!(global[0].body().as_str(), "global");
+
+        let scoped = repo.list_recent(market, 10).await.unwrap();
+        assert_eq!(scoped.len(), 1);
+        assert_eq!(scoped[0].body().as_str(), "market");
     }
 }

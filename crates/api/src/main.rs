@@ -90,7 +90,13 @@ async fn main() {
         ),
         users: UserState::new(users.clone(), bets.clone(), storage.clone()),
         files: FileState::new(storage),
-        chat: ChatState::new(chat_messages, users.clone(), access_tokens, broker),
+        chat: ChatState::new(
+            chat_messages,
+            users.clone(),
+            markets.clone(),
+            access_tokens,
+            broker,
+        ),
         markets: MarketState::new(markets.clone(), bets.clone()),
         bets: BetState::new(bets, markets, users),
     };

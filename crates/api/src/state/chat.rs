@@ -2,14 +2,10 @@ use std::sync::Arc;
 
 use application::ports::{AccessTokenService, MessageBroker};
 use application::use_cases::chat::{ListRecentMessages, PostMessage};
-use domain::repositories::{ChatMessageRepository, UserRepository};
+use domain::repositories::{ChatMessageRepository, MarketRepository, UserRepository};
 
 /// How many recent messages to replay to a client on connect.
 pub const HISTORY_LIMIT: i64 = 50;
-
-/// Pub/Sub channel the global chat fans out over. Other features get their own
-/// channels on the same shared [`MessageBroker`].
-pub const GLOBAL_CHANNEL: &str = "chat:global";
 
 #[derive(Clone)]
 pub struct ChatState {
@@ -29,12 +25,17 @@ impl ChatState {
     pub fn new(
         messages: Arc<dyn ChatMessageRepository>,
         users: Arc<dyn UserRepository>,
+        markets: Arc<dyn MarketRepository>,
         access_tokens: Arc<dyn AccessTokenService>,
         broker: Arc<dyn MessageBroker>,
     ) -> Self {
         Self {
-            post_message: Arc::new(PostMessage::new(messages.clone(), users.clone())),
-            list_recent: Arc::new(ListRecentMessages::new(messages, users)),
+            post_message: Arc::new(PostMessage::new(
+                messages.clone(),
+                users.clone(),
+                markets.clone(),
+            )),
+            list_recent: Arc::new(ListRecentMessages::new(messages, users, markets)),
             access_tokens,
             broker,
         }
