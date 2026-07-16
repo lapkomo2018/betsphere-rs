@@ -3,39 +3,32 @@
 //! Repositories record [`domain::events`] in the `outbox_events` table
 //! **inside the same transaction** as the change they describe, so an event
 //! exists if and only if the change committed. The [`OutboxProcessor`] then
-//! delivers the backlog to registered [`EventHandler`]s: at-least-once, in
+//! delivers the backlog to registered
+//! [`EventHandler`](application::ports::EventHandler)s: at-least-once, in
 //! insertion order, retrying failures. A crash between commit and delivery
 //! loses nothing — the event is still in the table when the processor comes
 //! back.
+//!
+//! The handlers themselves are not here: reacting to an event is application
+//! logic, so they live in [`application::broadcasters`] (with the exception of
+//! [`UserCacheInvalidator`], which keeps this crate's own Redis cache
+//! coherent). What this module owns is delivery — storage, decoding, and
+//! retry — and the erasure that lets differently-typed handlers share one
+//! topic-keyed registry.
 
-mod chat_broadcaster;
 mod in_memory_bus;
 mod outbox;
-mod price_broadcaster;
-mod bet_broadcaster;
 mod user_cache;
 
-pub use bet_broadcaster::BetPlacedBroadcaster;
-pub use chat_broadcaster::ChatMessageBroadcaster;
 pub use in_memory_bus::InMemoryEventBus;
 pub use outbox::{publish, OutboxProcessor};
-pub use price_broadcaster::PriceUpdateBroadcaster;
 pub use user_cache::UserCacheInvalidator;
 
 use std::marker::PhantomData;
 
+use application::ports::EventHandler;
 use async_trait::async_trait;
 use domain::events::Event;
-
-/// A subscriber to one event type. The topic comes from `E::TOPIC`, so a
-/// handler can only ever be registered on — and handed — the event it is
-/// written for. Delivery is at-least-once, so handlers must be idempotent.
-#[async_trait]
-pub trait EventHandler<E: Event>: Send + Sync {
-    /// Processes one event. Returning an error leaves the event pending; the
-    /// processor delivers it again on a later pass.
-    async fn handle(&self, event: &E) -> Result<(), String>;
-}
 
 /// Why one erased delivery attempt did not succeed.
 enum DeliveryError {

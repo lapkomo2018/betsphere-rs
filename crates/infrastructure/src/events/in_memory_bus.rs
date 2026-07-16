@@ -1,9 +1,10 @@
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
+use application::ports::EventHandler;
 use domain::events::Event;
 
-use super::{DeliveryError, ErasedEventHandler, EventHandler, TypedHandler};
+use super::{DeliveryError, ErasedEventHandler, TypedHandler};
 
 /// Synchronous in-process stand-in for the outbox pipeline, for environments
 /// without Postgres (tests, the in-memory dev setup): in-memory repositories

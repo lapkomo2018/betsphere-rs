@@ -1,9 +1,9 @@
 use std::sync::Arc;
 
+use application::ports::EventHandler;
 use async_trait::async_trait;
 use domain::events::UserBalanceChanged;
 
-use super::EventHandler;
 use crate::persistence::redis::CachedUserRepository;
 
 /// Keeps the read-through user cache coherent with balance changes made in

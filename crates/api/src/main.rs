@@ -10,11 +10,11 @@ mod tests;
 
 use std::sync::Arc;
 
-use infrastructure::auth::{Argon2PasswordHasher, JwtAccessTokens};
-use infrastructure::events::{
-    BetPlacedBroadcaster, ChatMessageBroadcaster, OutboxProcessor, PriceUpdateBroadcaster,
-    UserCacheInvalidator,
+use application::broadcasters::{
+    BetPlacedBroadcaster, ChatMessageBroadcaster, MarketPriceUpdateBroadcaster,
 };
+use infrastructure::auth::{Argon2PasswordHasher, JwtAccessTokens};
+use infrastructure::events::{OutboxProcessor, UserCacheInvalidator};
 use infrastructure::messaging::RedisMessageBroker;
 use infrastructure::persistence::postgres::{
     self, run_migrations, PgBetRepository, PgChatMessageRepository, PgMarketRepository,
@@ -72,7 +72,7 @@ async fn main() {
     let outbox = OutboxProcessor::new(pool.clone())
         .with_handler(UserCacheInvalidator::new(users.clone()))
         .with_handler(BetPlacedBroadcaster::new(bets.clone(), broker.clone()))
-        .with_handler(PriceUpdateBroadcaster::new(markets.clone(), broker.clone()))
+        .with_handler(MarketPriceUpdateBroadcaster::new(markets.clone(), broker.clone()))
         .with_handler(ChatMessageBroadcaster::new(
             chat_messages.clone(),
             users.clone(),

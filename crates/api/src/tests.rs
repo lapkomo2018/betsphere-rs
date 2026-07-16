@@ -2,15 +2,16 @@
 
 use std::sync::Arc;
 
+use application::broadcasters::{
+    BetPlacedBroadcaster, ChatMessageBroadcaster, MarketPriceUpdateBroadcaster,
+};
 use axum::body::{to_bytes, Body};
 use axum::http::{header, Request, StatusCode};
 use axum::Router;
 use chrono::Duration;
 use futures::{SinkExt, StreamExt};
 use infrastructure::auth::{Argon2PasswordHasher, JwtAccessTokens};
-use infrastructure::events::{
-    BetPlacedBroadcaster, ChatMessageBroadcaster, InMemoryEventBus, PriceUpdateBroadcaster,
-};
+use infrastructure::events::InMemoryEventBus;
 use infrastructure::messaging::InMemoryMessageBroker;
 use infrastructure::persistence::in_memory::{
     InMemoryBetRepository, InMemoryChatMessageRepository, InMemoryMarketRepository,
@@ -51,7 +52,7 @@ fn test_env() -> (Router, Arc<InMemoryMarketRepository>) {
     );
     let chat_messages = Arc::new(InMemoryChatMessageRepository::new().with_events(bus.clone()));
     bus.register(BetPlacedBroadcaster::new(bets.clone(), broker.clone()));
-    bus.register(PriceUpdateBroadcaster::new(markets.clone(), broker.clone()));
+    bus.register(MarketPriceUpdateBroadcaster::new(markets.clone(), broker.clone()));
     bus.register(ChatMessageBroadcaster::new(
         chat_messages.clone(),
         users.clone(),

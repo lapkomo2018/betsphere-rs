@@ -2,12 +2,13 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
+use application::ports::EventHandler;
 use domain::events::Event;
 use domain::repositories::RepositoryError;
 use sqlx::postgres::PgListener;
 use sqlx::{PgExecutor, PgPool};
 
-use super::{DeliveryError, ErasedEventHandler, EventHandler, TypedHandler};
+use super::{DeliveryError, ErasedEventHandler, TypedHandler};
 use crate::persistence::postgres::map_sqlx_err;
 
 /// Postgres NOTIFY channel that wakes the processor as soon as an event commits.

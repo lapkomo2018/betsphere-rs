@@ -2,9 +2,8 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 
-use super::EventHandler;
-use application::ports::{MessageBroker, MessageBrokerExt};
-use application::realtime::BetPlacedBroadcast;
+use crate::ports::{EventHandler, MessageBroker, MessageBrokerExt};
+use crate::realtime::BetPlacedBroadcast;
 use domain::events::BetPlaced;
 use domain::repositories::BetRepository;
 
@@ -15,14 +14,8 @@ pub struct BetPlacedBroadcaster {
 }
 
 impl BetPlacedBroadcaster {
-    pub fn new(
-        bets: Arc<dyn BetRepository>,
-        broker: Arc<dyn MessageBroker>,
-    ) -> Self {
-        Self {
-            bets,
-            broker,
-        }
+    pub fn new(bets: Arc<dyn BetRepository>, broker: Arc<dyn MessageBroker>) -> Self {
+        Self { bets, broker }
     }
 }
 

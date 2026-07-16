@@ -2,10 +2,12 @@
 //! Implementations live in the infrastructure layer.
 
 mod auth;
+mod events;
 mod messaging;
 mod storage;
 
 pub use auth::{AccessClaims, AccessTokenService, AuthPortError, PasswordHasher};
+pub use events::EventHandler;
 pub use messaging::{
     Broadcast, MessageBroker, MessageBrokerError, MessageBrokerExt, MessageStream, TypedStream,
 };
