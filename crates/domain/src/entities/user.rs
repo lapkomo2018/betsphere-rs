@@ -195,6 +195,13 @@ impl User {
         self.role
     }
 
+    /// Overrides the user's role. Reserved for privileged/system callers;
+    /// already-issued access tokens keep their old role until they expire.
+    pub fn set_role(&mut self, role: Role) {
+        self.role = role;
+        self.updated_at = Utc::now();
+    }
+
     pub fn created_at(&self) -> DateTime<Utc> {
         self.created_at
     }
@@ -218,6 +225,19 @@ mod tests {
         assert_eq!(user.balance(), User::STARTING_BALANCE);
         assert_eq!(user.role(), Role::User);
         assert!(user.avatar_url().is_none());
+    }
+
+    #[test]
+    fn set_role_overrides_role_and_bumps_updated_at() {
+        let mut user = User::new(
+            Username::new("alice").unwrap(),
+            Email::new("alice@example.com").unwrap(),
+            PasswordHash::new("$argon2id$fake"),
+        );
+        let before = user.updated_at();
+        user.set_role(Role::Admin);
+        assert_eq!(user.role(), Role::Admin);
+        assert!(user.updated_at() >= before);
     }
 
     #[test]

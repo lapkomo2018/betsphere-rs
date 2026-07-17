@@ -8,6 +8,7 @@ mod auth;
 mod bet;
 mod chat;
 mod file;
+mod internal;
 mod market;
 mod user;
 mod ws;
@@ -18,6 +19,7 @@ pub use auth::AuthState;
 pub use bet::BetState;
 pub use chat::{ChatState, HISTORY_LIMIT};
 pub use file::FileState;
+pub use internal::InternalState;
 pub use market::MarketState;
 pub use user::UserState;
 pub use ws::WsState;
@@ -32,4 +34,5 @@ pub struct AppState {
     pub ws: WsState,
     pub markets: MarketState,
     pub bets: BetState,
+    pub internal: InternalState,
 }

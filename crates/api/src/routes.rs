@@ -3,6 +3,7 @@ mod bets;
 mod chat;
 mod files;
 mod health;
+mod internal;
 mod markets;
 mod users;
 mod ws;
@@ -10,7 +11,7 @@ mod ws;
 pub use files::PUBLIC_BASE as FILES_PUBLIC_BASE;
 
 use axum::Router;
-use utoipa::openapi::security::{HttpAuthScheme, HttpBuilder, SecurityScheme};
+use utoipa::openapi::security::{ApiKey, ApiKeyValue, HttpAuthScheme, HttpBuilder, SecurityScheme};
 use utoipa::{Modify, OpenApi};
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_swagger_ui::SwaggerUi;
@@ -43,6 +44,10 @@ impl Modify for SecurityAddon {
                     .build(),
             ),
         );
+        components.add_security_scheme(
+            "internal_key",
+            SecurityScheme::ApiKey(ApiKey::Header(ApiKeyValue::new("X-Internal-Key"))),
+        );
     }
 }
 
@@ -55,6 +60,7 @@ pub fn router(state: AppState) -> Router {
         .nest("/api/markets", markets::router())
         .nest("/api/bets", bets::router())
         .nest("/api/chat", chat::router())
+        .nest("/api/internal", internal::router())
         .nest(files::PUBLIC_BASE, files::router())
         .split_for_parts();
 

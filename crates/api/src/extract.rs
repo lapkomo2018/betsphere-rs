@@ -2,12 +2,15 @@
 
 use application::ApplicationError;
 use application::ports::AccessClaims;
-use axum::extract::FromRequestParts;
+use axum::extract::{FromRef, FromRequestParts};
 use axum::http::header::AUTHORIZATION;
 use axum::http::request::Parts;
 
 use crate::error::ApiError;
-use crate::state::AppState;
+use crate::state::{AppState, InternalState};
+
+/// Header carrying the shared secret for the internal/system endpoints.
+const INTERNAL_KEY_HEADER: &str = "X-Internal-Key";
 
 /// Extracts and verifies the `Authorization: Bearer <jwt>` header. Handlers
 /// that take this parameter reject unauthenticated requests with 401.
@@ -41,4 +44,49 @@ impl FromRequestParts<AppState> for CurrentUser {
 
         Ok(Self(claims))
     }
+}
+
+/// Guards the internal/system endpoints. Succeeds only when the request carries
+/// an `X-Internal-Key` header matching the configured secret; if no secret is
+/// configured the internal API is treated as disabled and every request fails.
+pub struct InternalAuth;
+
+impl FromRequestParts<AppState> for InternalAuth {
+    type Rejection = ApiError;
+
+    async fn from_request_parts(
+        parts: &mut Parts,
+        state: &AppState,
+    ) -> Result<Self, Self::Rejection> {
+        let internal = InternalState::from_ref(state);
+
+        // Fail closed: no secret configured means the internal API is off.
+        let Some(expected) = internal.api_key.as_deref() else {
+            return Err(forbidden("internal API is disabled"));
+        };
+
+        let provided = parts
+            .headers
+            .get(INTERNAL_KEY_HEADER)
+            .and_then(|value| value.to_str().ok())
+            .ok_or_else(|| forbidden("missing or malformed internal API key"))?;
+
+        if !constant_time_eq(provided.as_bytes(), expected.as_bytes()) {
+            return Err(forbidden("invalid internal API key"));
+        }
+
+        Ok(Self)
+    }
+}
+
+fn forbidden(msg: &str) -> ApiError {
+    ApiError::from(ApplicationError::Forbidden(msg.to_owned()))
+}
+
+/// Length-independent comparison that avoids leaking the secret through timing.
+fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
 }

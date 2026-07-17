@@ -25,10 +25,12 @@ use tower::ServiceExt;
 
 use crate::routes;
 use crate::state::{
-    AppState, AuthState, BetState, ChatState, FileState, MarketState, UserState, WsState,
+    AppState, AuthState, BetState, ChatState, FileState, InternalState, MarketState, UserState,
+    WsState,
 };
 
 const APP_URL: &str = "http://localhost:8080";
+const INTERNAL_KEY: &str = "test-internal-key";
 
 fn test_app() -> Router {
     test_env().0
@@ -91,7 +93,8 @@ fn test_env() -> (Router, Arc<InMemoryMarketRepository>) {
             broker,
         ),
         markets: MarketState::new(markets.clone(), bets.clone()),
-        bets: BetState::new(bets, markets.clone(), users),
+        bets: BetState::new(bets, markets.clone(), users.clone()),
+        internal: InternalState::new(users, Some(INTERNAL_KEY.to_owned())),
     };
     (routes::router(state), markets)
 }
@@ -513,6 +516,91 @@ async fn chat_history_endpoint_requires_auth() {
         .unwrap();
     let response = app.oneshot(request).await.unwrap();
     assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}
+
+// --- Internal endpoints ---
+
+/// Fetches the authenticated user's private profile.
+async fn me(app: &Router, token: &str) -> serde_json::Value {
+    let request = Request::get("/api/users/me")
+        .header(header::AUTHORIZATION, format!("Bearer {token}"))
+        .body(Body::empty())
+        .unwrap();
+    body_json(app.clone().oneshot(request).await.unwrap()).await
+}
+
+/// Sends a role patch to the internal endpoint with the given key header (if any).
+async fn patch_role(
+    app: &Router,
+    id: &str,
+    role: &str,
+    key: Option<&str>,
+) -> axum::response::Response {
+    let mut builder = Request::patch(format!("/api/internal/users/{id}"))
+        .header(header::CONTENT_TYPE, "application/json");
+    if let Some(key) = key {
+        builder = builder.header("X-Internal-Key", key);
+    }
+    let request = builder
+        .body(Body::from(format!(r#"{{"role":"{role}"}}"#)))
+        .unwrap();
+    app.clone().oneshot(request).await.unwrap()
+}
+
+#[tokio::test]
+async fn internal_endpoint_promotes_user_to_admin() {
+    let app = test_app();
+    let token = register(&app).await;
+    let profile = me(&app, &token).await;
+    assert_eq!(profile["role"], "user");
+    let id = profile["id"].as_str().unwrap();
+
+    let response = patch_role(&app, id, "admin", Some(INTERNAL_KEY)).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(body_json(response).await["role"], "admin");
+
+    // The change persists and is visible on the profile.
+    assert_eq!(me(&app, &token).await["role"], "admin");
+}
+
+#[tokio::test]
+async fn internal_endpoint_rejects_missing_key() {
+    let app = test_app();
+    let token = register(&app).await;
+    let id = me(&app, &token).await["id"].as_str().unwrap().to_owned();
+
+    let response = patch_role(&app, &id, "admin", None).await;
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    // The role is unchanged.
+    assert_eq!(me(&app, &token).await["role"], "user");
+}
+
+#[tokio::test]
+async fn internal_endpoint_rejects_wrong_key() {
+    let app = test_app();
+    let token = register(&app).await;
+    let id = me(&app, &token).await["id"].as_str().unwrap().to_owned();
+
+    let response = patch_role(&app, &id, "admin", Some("nope")).await;
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn internal_endpoint_rejects_unknown_role() {
+    let app = test_app();
+    let token = register(&app).await;
+    let id = me(&app, &token).await["id"].as_str().unwrap().to_owned();
+
+    let response = patch_role(&app, &id, "superuser", Some(INTERNAL_KEY)).await;
+    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+}
+
+#[tokio::test]
+async fn internal_endpoint_404_for_unknown_user() {
+    let app = test_app();
+    let ghost = uuid::Uuid::new_v4();
+    let response = patch_role(&app, &ghost.to_string(), "admin", Some(INTERNAL_KEY)).await;
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
 }
 
 // --- Markets ---

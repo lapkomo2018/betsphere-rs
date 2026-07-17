@@ -29,7 +29,8 @@ use tracing_subscriber::EnvFilter;
 
 use crate::config::Config;
 use crate::state::{
-    AppState, AuthState, BetState, ChatState, FileState, MarketState, UserState, WsState,
+    AppState, AuthState, BetState, ChatState, FileState, InternalState, MarketState, UserState,
+    WsState,
 };
 
 #[tokio::main]
@@ -113,7 +114,8 @@ async fn main() {
             broker,
         ),
         markets: MarketState::new(markets.clone(), bets.clone()),
-        bets: BetState::new(bets, markets, users),
+        bets: BetState::new(bets, markets, users.clone()),
+        internal: InternalState::new(users, config.auth.internal_api_key),
     };
 
     let cors = config.cors.layer().expect("invalid CORS configuration");
