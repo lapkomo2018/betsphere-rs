@@ -5,9 +5,9 @@ use std::sync::Arc;
 use application::broadcasters::{
     BetPlacedBroadcaster, ChatMessageBroadcaster, MarketPriceUpdateBroadcaster,
 };
-use axum::body::{to_bytes, Body};
-use axum::http::{header, Request, StatusCode};
 use axum::Router;
+use axum::body::{Body, to_bytes};
+use axum::http::{Request, StatusCode, header};
 use chrono::Duration;
 use futures::{SinkExt, StreamExt};
 use infrastructure::auth::{Argon2PasswordHasher, JwtAccessTokens};
@@ -54,7 +54,10 @@ fn test_env() -> (Router, Arc<InMemoryMarketRepository>) {
     );
     let chat_messages = Arc::new(InMemoryChatMessageRepository::new().with_events(bus.clone()));
     bus.register(BetPlacedBroadcaster::new(bets.clone(), broker.clone()));
-    bus.register(MarketPriceUpdateBroadcaster::new(markets.clone(), broker.clone()));
+    bus.register(MarketPriceUpdateBroadcaster::new(
+        markets.clone(),
+        broker.clone(),
+    ));
     bus.register(ChatMessageBroadcaster::new(
         chat_messages.clone(),
         users.clone(),
@@ -127,7 +130,7 @@ fn multipart_body(content_type: &str, bytes: &[u8]) -> (String, Vec<u8>) {
          Content-Disposition: form-data; name=\"file\"; filename=\"a\"\r\n\
          Content-Type: {content_type}\r\n\r\n"
     )
-        .into_bytes();
+    .into_bytes();
     body.extend_from_slice(bytes);
     body.extend_from_slice(format!("\r\n--{BOUNDARY}--\r\n").as_bytes());
     (format!("multipart/form-data; boundary={BOUNDARY}"), body)
@@ -221,7 +224,7 @@ async fn serve(app: Router) -> SocketAddr {
 /// Reads the next text frame, skipping ping/pong control frames.
 async fn next_text<S>(ws: &mut S) -> String
 where
-    S: StreamExt<Item=Result<WsMessage, tokio_tungstenite::tungstenite::Error>> + Unpin,
+    S: StreamExt<Item = Result<WsMessage, tokio_tungstenite::tungstenite::Error>> + Unpin,
 {
     loop {
         match ws.next().await.expect("stream closed").expect("ws error") {
@@ -236,16 +239,16 @@ where
 /// returning its `data` array.
 async fn subscribe<S>(ws: &mut S, channel: &str) -> serde_json::Value
 where
-    S: StreamExt<Item=Result<WsMessage, tokio_tungstenite::tungstenite::Error>>
-    + SinkExt<WsMessage>
-    + Unpin,
+    S: StreamExt<Item = Result<WsMessage, tokio_tungstenite::tungstenite::Error>>
+        + SinkExt<WsMessage>
+        + Unpin,
     <S as futures::Sink<WsMessage>>::Error: std::fmt::Debug,
 {
     ws.send(WsMessage::text(format!(
         r#"{{"type":"subscribe","channel":"{channel}"}}"#
     )))
-        .await
-        .unwrap();
+    .await
+    .unwrap();
     let value: serde_json::Value = serde_json::from_str(&next_text(ws).await).unwrap();
     assert_eq!(value["type"], "history", "unexpected frame: {value}");
     assert_eq!(value["channel"], channel);
@@ -267,8 +270,8 @@ async fn chat_ws_posts_and_echoes_message() {
     ws.send(WsMessage::text(
         r#"{"type":"chat_message","channel":"global_chat","body":"hello world"}"#,
     ))
-        .await
-        .unwrap();
+    .await
+    .unwrap();
 
     let value: serde_json::Value = serde_json::from_str(&next_text(&mut ws).await).unwrap();
     assert_eq!(value["type"], "chat_message");
@@ -318,8 +321,8 @@ async fn market_chat_is_scoped_to_its_market() {
     ws.send(WsMessage::text(format!(
         r#"{{"type":"chat_message","channel":"{market_channel}","body":"market talk"}}"#
     )))
-        .await
-        .unwrap();
+    .await
+    .unwrap();
     let value: serde_json::Value = serde_json::from_str(&next_text(&mut ws).await).unwrap();
     assert_eq!(value["channel"], market_channel.as_str());
     assert_eq!(value["data"]["body"], "market talk");
@@ -343,8 +346,8 @@ async fn chat_ws_rejects_message_to_unknown_market() {
     ws.send(WsMessage::text(format!(
         r#"{{"type":"chat_message","channel":"market_chat:{ghost}","body":"anyone?"}}"#
     )))
-        .await
-        .unwrap();
+    .await
+    .unwrap();
 
     let value: serde_json::Value = serde_json::from_str(&next_text(&mut ws).await).unwrap();
     assert_eq!(value["type"], "error");
@@ -375,8 +378,8 @@ async fn market_feed_subscribe_sends_price_snapshot() {
     ws.send(WsMessage::text(format!(
         r#"{{"type":"subscribe","channel":"{channel}"}}"#
     )))
-        .await
-        .unwrap();
+    .await
+    .unwrap();
 
     // One price_update per outcome of the seeded Yes/No market.
     let mut prices = std::collections::HashMap::new();
@@ -408,8 +411,8 @@ async fn market_feed_streams_price_updates_after_a_bet() {
     ws.send(WsMessage::text(format!(
         r#"{{"type":"subscribe","channel":"{channel}"}}"#
     )))
-        .await
-        .unwrap();
+    .await
+    .unwrap();
     // Drain the two snapshot frames of the even Yes/No market.
     for _ in 0..2 {
         next_text(&mut ws).await;
@@ -481,8 +484,8 @@ async fn market_feed_rejects_unknown_market() {
     ws.send(WsMessage::text(format!(
         r#"{{"type":"subscribe","channel":"market:{ghost}"}}"#
     )))
-        .await
-        .unwrap();
+    .await
+    .unwrap();
 
     let value: serde_json::Value = serde_json::from_str(&next_text(&mut ws).await).unwrap();
     assert_eq!(value["type"], "error");
@@ -501,8 +504,8 @@ async fn market_feed_rejects_chat_messages() {
     ws.send(WsMessage::text(format!(
         r#"{{"type":"chat_message","channel":"market:{market_id}","body":"wrong channel"}}"#
     )))
-        .await
-        .unwrap();
+    .await
+    .unwrap();
 
     let value: serde_json::Value = serde_json::from_str(&next_text(&mut ws).await).unwrap();
     assert_eq!(value["type"], "error");
@@ -516,6 +519,113 @@ async fn chat_history_endpoint_requires_auth() {
         .unwrap();
     let response = app.oneshot(request).await.unwrap();
     assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}
+
+/// GETs the history endpoint with an arbitrary query string.
+async fn history(app: &Router, token: &str, query: &str) -> axum::response::Response {
+    let request = Request::get(format!("/api/chat/messages{query}"))
+        .header(header::AUTHORIZATION, format!("Bearer {token}"))
+        .body(Body::empty())
+        .unwrap();
+    app.clone().oneshot(request).await.unwrap()
+}
+
+/// Posts `bodies` to the global room over one socket, in order, waiting for
+/// each echo so the messages land with distinct, increasing timestamps.
+async fn seed_global_chat(url: &str, bodies: &[&str]) {
+    let (mut ws, _) = connect_async(url).await.unwrap();
+    subscribe(&mut ws, "global_chat").await;
+    for body in bodies {
+        ws.send(WsMessage::text(format!(
+            r#"{{"type":"chat_message","channel":"global_chat","body":"{body}"}}"#
+        )))
+        .await
+        .unwrap();
+        let _ = next_text(&mut ws).await;
+    }
+}
+
+#[tokio::test]
+async fn chat_history_pages_around_an_anchor_message() {
+    let app = test_app();
+    let token = register(&app).await;
+    let http = app.clone();
+    let addr = serve(app).await;
+    let url = format!("ws://{addr}/ws?token={token}");
+
+    seed_global_chat(&url, &["one", "two", "three", "four", "five"]).await;
+
+    let all = body_json(history(&http, &token, "").await).await;
+    let bodies: Vec<&str> = all
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|m| m["body"].as_str().unwrap())
+        .collect();
+    assert_eq!(bodies, ["one", "two", "three", "four", "five"]);
+    let anchor = all[2]["id"].as_str().unwrap().to_owned(); // "three"
+
+    let before = body_json(history(&http, &token, &format!("?before_uuid={anchor}")).await).await;
+    let before: Vec<&str> = before
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|m| m["body"].as_str().unwrap())
+        .collect();
+    assert_eq!(before, ["one", "two"]);
+
+    let after = body_json(history(&http, &token, &format!("?after_uuid={anchor}")).await).await;
+    let after: Vec<&str> = after
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|m| m["body"].as_str().unwrap())
+        .collect();
+    assert_eq!(after, ["four", "five"]);
+}
+
+#[tokio::test]
+async fn chat_history_rejects_both_cursors_at_once() {
+    let app = test_app();
+    let token = register(&app).await;
+    let id = uuid::Uuid::new_v4();
+
+    let response = history(&app, &token, &format!("?before_uuid={id}&after_uuid={id}")).await;
+    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+}
+
+#[tokio::test]
+async fn chat_history_rejects_an_anchor_from_another_room() {
+    let (app, markets) = test_env();
+    let (market_id, _) = seed_market(&markets).await;
+    let token = register(&app).await;
+    let http = app.clone();
+    let addr = serve(app).await;
+    let url = format!("ws://{addr}/ws?token={token}");
+
+    seed_global_chat(&url, &["global only"]).await;
+    let all = body_json(history(&http, &token, "").await).await;
+    let global_id = all[0]["id"].as_str().unwrap();
+
+    // Paging a market room from a global message would otherwise return an
+    // arbitrary page rather than an error.
+    let response = history(
+        &http,
+        &token,
+        &format!("?market_id={market_id}&before_uuid={global_id}"),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn chat_history_rejects_an_unknown_anchor() {
+    let app = test_app();
+    let token = register(&app).await;
+    let ghost = uuid::Uuid::new_v4();
+
+    let response = history(&app, &token, &format!("?after_uuid={ghost}")).await;
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
 }
 
 // --- Internal endpoints ---

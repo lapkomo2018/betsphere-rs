@@ -21,7 +21,7 @@ mod outbox;
 mod user_cache;
 
 pub use in_memory_bus::InMemoryEventBus;
-pub use outbox::{publish, OutboxProcessor};
+pub use outbox::{OutboxProcessor, publish};
 pub use user_cache::UserCacheInvalidator;
 
 use std::marker::PhantomData;

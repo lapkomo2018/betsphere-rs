@@ -11,12 +11,13 @@
 use std::collections::HashMap;
 
 use crate::error::ApiError;
-use crate::state::{AppState, WsState, HISTORY_LIMIT};
+use crate::state::{AppState, HISTORY_LIMIT, WsState};
+use application::ApplicationError;
 use application::ports::{Broadcast, MessageBrokerExt, TypedStream};
 use application::realtime::{
     BetPlacedBroadcast, ChatMessageBroadcast, PriceTick, PriceUpdateBroadcast,
 };
-use application::ApplicationError;
+use application::use_cases::chat::HistoryWindow;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{Query, State};
 use axum::response::Response;
@@ -121,7 +122,10 @@ enum ServerFrame {
     },
     /// One outcome's new price on a market feed. A snapshot of every outcome
     /// is sent on subscribe; live frames follow as bets move the prices.
-    PriceUpdate { channel: String, data: PriceUpdateResponse },
+    PriceUpdate {
+        channel: String,
+        data: PriceUpdateResponse,
+    },
     /// One newly committed bet on a market's bet feed.
     BetPlaced {
         channel: String,
@@ -290,7 +294,12 @@ async fn handle_frame(
                     else {
                         return Ok(());
                     };
-                    let views = match state.list_recent.execute(chat, HISTORY_LIMIT).await {
+                    // Live subscribers always replay the newest page.
+                    let views = match state
+                        .list_recent
+                        .execute(chat, HISTORY_LIMIT, HistoryWindow::default())
+                        .await
+                    {
                         Ok(views) => views,
                         Err(e) => return send_error(socket, &e.to_string()).await,
                     };
@@ -301,7 +310,7 @@ async fn handle_frame(
                             data: views.iter().map(ChatMessageResponse::from).collect(),
                         },
                     )
-                        .await?;
+                    .await?;
 
                     let frame_channel = name.clone();
                     spawn_forwarder(live, tx.clone(), move |message| {
@@ -344,7 +353,7 @@ async fn handle_frame(
                                 },
                             },
                         )
-                            .await?;
+                        .await?;
                     }
 
                     // One batch of ticks per price move; fan out one frame
@@ -393,7 +402,7 @@ async fn handle_frame(
                             data: bets.iter().map(BetPlacedResponse::from).collect(),
                         },
                     )
-                        .await?;
+                    .await?;
 
                     let frame_channel = name.clone();
                     spawn_forwarder(live, tx.clone(), move |message| {
@@ -506,5 +515,5 @@ async fn send_error(socket: &mut WebSocket, message: &str) -> Result<(), ()> {
             message: message.to_owned(),
         },
     )
-        .await
+    .await
 }

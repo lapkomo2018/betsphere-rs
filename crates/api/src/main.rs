@@ -17,13 +17,13 @@ use infrastructure::auth::{Argon2PasswordHasher, JwtAccessTokens};
 use infrastructure::events::{OutboxProcessor, UserCacheInvalidator};
 use infrastructure::messaging::RedisMessageBroker;
 use infrastructure::persistence::postgres::{
-    self, run_migrations, PgBetRepository, PgChatMessageRepository, PgMarketRepository,
-    PgRefreshTokenRepository, PgUnitOfWork, PgUserRepository,
+    self, PgBetRepository, PgChatMessageRepository, PgMarketRepository, PgRefreshTokenRepository,
+    PgUnitOfWork, PgUserRepository, run_migrations,
 };
 use infrastructure::persistence::redis::{self, CachedUserRepository};
 use infrastructure::storage::LocalFileStorage;
-use tower_http::trace::{DefaultOnResponse, TraceLayer};
 use tower_http::LatencyUnit;
+use tower_http::trace::{DefaultOnResponse, TraceLayer};
 use tracing::Level;
 use tracing_subscriber::EnvFilter;
 
@@ -73,7 +73,10 @@ async fn main() {
     let outbox = OutboxProcessor::new(pool.clone())
         .with_handler(UserCacheInvalidator::new(users.clone()))
         .with_handler(BetPlacedBroadcaster::new(bets.clone(), broker.clone()))
-        .with_handler(MarketPriceUpdateBroadcaster::new(markets.clone(), broker.clone()))
+        .with_handler(MarketPriceUpdateBroadcaster::new(
+            markets.clone(),
+            broker.clone(),
+        ))
         .with_handler(ChatMessageBroadcaster::new(
             chat_messages.clone(),
             users.clone(),

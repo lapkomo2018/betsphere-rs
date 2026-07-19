@@ -23,7 +23,9 @@ use domain::entities::{
     ChatChannel, ChatMessage, Market, MarketId, MessageId, Outcome, OutcomeId, User,
 };
 use domain::events::{ChatMessagePosted, MarketPricesUpdated};
-use domain::repositories::{ChatMessageRepository as _, MarketRepository as _, UserRepository as _};
+use domain::repositories::{
+    ChatMessageRepository as _, MarketRepository as _, UserRepository as _,
+};
 use domain::value_objects::chat::MessageBody;
 use domain::value_objects::market::{MarketTitle, OutcomeLabel, Price};
 use domain::value_objects::user::{Email, PasswordHash, Username};

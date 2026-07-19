@@ -72,7 +72,10 @@ mod tests {
     fn serde_round_trips_as_bare_string() {
         let name = Username::new("alice_01").unwrap();
         assert_eq!(serde_json::to_string(&name).unwrap(), r#""alice_01""#);
-        assert_eq!(serde_json::from_str::<Username>(r#""alice_01""#).unwrap(), name);
+        assert_eq!(
+            serde_json::from_str::<Username>(r#""alice_01""#).unwrap(),
+            name
+        );
     }
 
     #[test]

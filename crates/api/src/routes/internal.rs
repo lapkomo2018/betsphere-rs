@@ -61,7 +61,9 @@ async fn update_user(
     Path(id): Path<Uuid>,
     Json(body): Json<UpdateUserRequest>,
 ) -> Result<Json<PrivateUserResponse>, ApiError> {
-    let input = body.into_input().map_err(application::ApplicationError::from)?;
+    let input = body
+        .into_input()
+        .map_err(application::ApplicationError::from)?;
     let user = internal.update_user.execute(id, input).await?;
     let stats = users.get_user_stats.execute(user.id()).await?;
     Ok(Json(PrivateUserResponse::new(&user, stats)))

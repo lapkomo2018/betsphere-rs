@@ -111,11 +111,11 @@ impl BetRepository for PgBetRepository {
             "UPDATE users SET balance = balance - $1, updated_at = now()
              WHERE id = $2 AND balance >= $1",
         )
-            .bind(bet.amount())
-            .bind(bet.user_id().as_uuid())
-            .execute(&mut *tx)
-            .await
-            .map_err(map_sqlx_err)?;
+        .bind(bet.amount())
+        .bind(bet.user_id().as_uuid())
+        .execute(&mut *tx)
+        .await
+        .map_err(map_sqlx_err)?;
         if debited.rows_affected() == 0 {
             return Err(RepositoryError::Conflict(
                 "balance no longer covers the stake".into(),
@@ -125,11 +125,11 @@ impl BetRepository for PgBetRepository {
         let repeat_bettor: bool = sqlx::query_scalar(
             "SELECT EXISTS(SELECT 1 FROM bets WHERE user_id = $1 AND market_id = $2)",
         )
-            .bind(bet.user_id().as_uuid())
-            .bind(bet.market_id().as_uuid())
-            .fetch_one(&mut *tx)
-            .await
-            .map_err(map_sqlx_err)?;
+        .bind(bet.user_id().as_uuid())
+        .bind(bet.market_id().as_uuid())
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(map_sqlx_err)?;
 
         sqlx::query(
             "INSERT INTO bets (id, user_id, market_id, outcome_id, amount, price, status, payout, created_at)
@@ -161,12 +161,12 @@ impl BetRepository for PgBetRepository {
             sqlx::query(
                 "UPDATE outcomes SET volume = volume + $2, current_price = $3 WHERE id = $1",
             )
-                .bind(outcome.id().as_uuid())
-                .bind(staked)
-                .bind(outcome.current_price().as_ten_thousandths())
-                .execute(&mut *tx)
-                .await
-                .map_err(map_sqlx_err)?;
+            .bind(outcome.id().as_uuid())
+            .bind(staked)
+            .bind(outcome.current_price().as_ten_thousandths())
+            .execute(&mut *tx)
+            .await
+            .map_err(map_sqlx_err)?;
         }
 
         sqlx::query(
@@ -174,12 +174,12 @@ impl BetRepository for PgBetRepository {
              SET total_volume = total_volume + $2, participants_count = participants_count + $3
              WHERE id = $1",
         )
-            .bind(bet.market_id().as_uuid())
-            .bind(bet.amount())
-            .bind(if repeat_bettor { 0i32 } else { 1 })
-            .execute(&mut *tx)
-            .await
-            .map_err(map_sqlx_err)?;
+        .bind(bet.market_id().as_uuid())
+        .bind(bet.amount())
+        .bind(if repeat_bettor { 0i32 } else { 1 })
+        .execute(&mut *tx)
+        .await
+        .map_err(map_sqlx_err)?;
 
         for point in points {
             insert_price_point(&mut *tx, point).await?;
@@ -193,16 +193,10 @@ impl BetRepository for PgBetRepository {
                 user_id: bet.user_id(),
             },
         )
-            .await?;
+        .await?;
 
         // Likewise for the newly committed bet, which powers live bet feeds.
-        publish(
-            &mut *tx,
-            &BetPlaced {
-                bet_id: bet.id(),
-            },
-        )
-            .await?;
+        publish(&mut *tx, &BetPlaced { bet_id: bet.id() }).await?;
 
         // Likewise for the price move, which live market feeds broadcast.
         publish(
@@ -211,14 +205,13 @@ impl BetRepository for PgBetRepository {
                 market_id: bet.market_id(),
             },
         )
-            .await?;
+        .await?;
 
         tx.commit().await.map_err(map_sqlx_err)
     }
 
     async fn active_for_market(&self, market_id: MarketId) -> Result<Vec<Bet>, RepositoryError> {
-        let query =
-            format!("SELECT {BET_COLUMNS} FROM bets WHERE market_id = $1 AND status = $2");
+        let query = format!("SELECT {BET_COLUMNS} FROM bets WHERE market_id = $1 AND status = $2");
         let rows = sqlx::query_as::<_, BetRow>(&query)
             .bind(market_id.as_uuid())
             .bind(BetStatus::Active.as_str())
@@ -252,11 +245,11 @@ impl BetRepository for PgBetRepository {
                 sqlx::query(
                     "UPDATE users SET balance = balance + $1, updated_at = now() WHERE id = $2",
                 )
-                    .bind(payout)
-                    .bind(bet.user_id().as_uuid())
-                    .execute(&mut *tx)
-                    .await
-                    .map_err(map_sqlx_err)?;
+                .bind(payout)
+                .bind(bet.user_id().as_uuid())
+                .execute(&mut *tx)
+                .await
+                .map_err(map_sqlx_err)?;
             }
         }
 
@@ -316,12 +309,12 @@ impl BetRepository for PgBetRepository {
                     COALESCE(SUM(amount), 0)::BIGINT
              FROM bets WHERE user_id = $1",
         )
-            .bind(user_id.as_uuid())
-            .bind(BetStatus::Won.as_str())
-            .bind(BetStatus::Lost.as_str())
-            .fetch_one(&self.pool)
-            .await
-            .map_err(map_sqlx_err)?;
+        .bind(user_id.as_uuid())
+        .bind(BetStatus::Won.as_str())
+        .bind(BetStatus::Lost.as_str())
+        .fetch_one(&self.pool)
+        .await
+        .map_err(map_sqlx_err)?;
         Ok(UserStats {
             total_bets,
             wins,

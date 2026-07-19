@@ -5,9 +5,9 @@ use crate::error::{ApiError, ErrorResponse};
 use crate::extract::CurrentUser;
 use crate::state::{AppState, ChatState, HISTORY_LIMIT};
 use application::realtime::ChatMessageBroadcast;
-use application::use_cases::chat::ChatMessageView;
-use axum::extract::{Query, State};
+use application::use_cases::chat::{ChatMessageView, HistoryWindow};
 use axum::Json;
+use axum::extract::{Query, State};
 use chrono::{DateTime, Utc};
 use domain::entities::ChatChannel;
 use serde::{Deserialize, Serialize};
@@ -74,6 +74,12 @@ impl From<ChatMessageBroadcast> for ChatMessageResponse {
 struct HistoryQuery {
     /// Return this market's chat room instead of the global one.
     market_id: Option<Uuid>,
+    /// Page backwards: the messages immediately older than this one.
+    /// Mutually exclusive with `after_id`.
+    before_id: Option<Uuid>,
+    /// Page forwards: the messages immediately newer than this one.
+    /// Mutually exclusive with `before_id`.
+    after_id: Option<Uuid>,
 }
 
 // --- Handlers ---
@@ -85,9 +91,10 @@ struct HistoryQuery {
     params(HistoryQuery),
     security(("bearer_auth" = [])),
     responses(
-        (status = 200, description = "Recent messages of one chat room, oldest first", body = [ChatMessageResponse]),
+        (status = 200, description = "One page of a chat room's messages, oldest first", body = [ChatMessageResponse]),
         (status = 401, description = "Missing or invalid token", body = ErrorResponse),
-        (status = 404, description = "Unknown market", body = ErrorResponse),
+        (status = 404, description = "Unknown market, or anchor message not in this room", body = ErrorResponse),
+        (status = 422, description = "before_uuid and after_uuid both set", body = ErrorResponse),
     )
 )]
 async fn get_messages(
@@ -96,7 +103,14 @@ async fn get_messages(
     Query(query): Query<HistoryQuery>,
 ) -> Result<Json<Vec<ChatMessageResponse>>, ApiError> {
     let channel = ChatChannel::from(query.market_id.map(Into::into));
-    let views = state.list_recent.execute(channel, HISTORY_LIMIT).await?;
+    let window = HistoryWindow {
+        before: query.before_id.map(Into::into),
+        after: query.after_id.map(Into::into),
+    };
+    let views = state
+        .list_recent
+        .execute(channel, HISTORY_LIMIT, window)
+        .await?;
     let messages = views.iter().map(ChatMessageResponse::from).collect();
     Ok(Json(messages))
 }

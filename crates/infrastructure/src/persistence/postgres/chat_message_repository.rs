@@ -5,7 +5,7 @@ use uuid::Uuid;
 
 use domain::entities::{ChatChannel, ChatMessage, MessageId};
 use domain::events::ChatMessagePosted;
-use domain::repositories::{ChatMessageRepository, RepositoryError};
+use domain::repositories::{ChatMessageRepository, MessageCursor, RepositoryError};
 use domain::value_objects::chat::MessageBody;
 
 use super::map_sqlx_err;
@@ -64,26 +64,47 @@ pub(super) async fn list_recent_messages(
     exec: impl PgExecutor<'_>,
     channel: ChatChannel,
     limit: i64,
+    cursor: Option<MessageCursor>,
 ) -> Result<Vec<ChatMessage>, RepositoryError> {
-    // Filter to one room, take the newest `limit` rows, then flip to
-    // oldest-first for display. Split into two statements because `= NULL`
+    // Filter to one room, take `limit` rows from the requested end, then flip
+    // to oldest-first for display. Split into two statements because `= NULL`
     // never matches and `IS NOT DISTINCT FROM` can't use the room index.
-    let room_filter = match channel.market_id() {
-        Some(_) => "market_id = $2",
-        None => "market_id IS NULL",
+    // $1 is the limit; the room takes $2 only when it is a market, so the
+    // cursor's placeholders shift accordingly.
+    let (room_filter, next) = match channel.market_id() {
+        Some(_) => ("market_id = $2".to_owned(), 3),
+        None => ("market_id IS NULL".to_owned(), 2),
+    };
+    // Row-value comparison so `(created_at, id)` is one ordering key: strictly
+    // older than the anchor for `before`, strictly newer for `after`.
+    let (cursor_filter, inner_order) = match cursor {
+        None => (String::new(), "DESC"),
+        Some(MessageCursor::Before(_)) => (
+            format!("AND (created_at, id) < (${next}, ${})", next + 1),
+            "DESC",
+        ),
+        // Paging forward walks up from the anchor, so scan ascending and take
+        // the messages *nearest* it rather than the newest in the room.
+        Some(MessageCursor::After(_)) => (
+            format!("AND (created_at, id) > (${next}, ${})", next + 1),
+            "ASC",
+        ),
     };
     let query = format!(
         "SELECT {MESSAGE_COLUMNS} FROM (
              SELECT {MESSAGE_COLUMNS} FROM chat_messages
-             WHERE {room_filter}
-             ORDER BY created_at DESC
+             WHERE {room_filter} {cursor_filter}
+             ORDER BY created_at {inner_order}, id {inner_order}
              LIMIT $1
-         ) recent
-         ORDER BY created_at ASC"
+         ) page
+         ORDER BY created_at ASC, id ASC"
     );
     let mut rows = sqlx::query_as::<_, ChatMessageRow>(&query).bind(limit);
     if let Some(market_id) = channel.market_id() {
         rows = rows.bind(market_id.as_uuid());
+    }
+    if let Some(MessageCursor::Before(anchor) | MessageCursor::After(anchor)) = cursor {
+        rows = rows.bind(anchor.created_at).bind(anchor.id.as_uuid());
     }
     let rows = rows.fetch_all(exec).await.map_err(map_sqlx_err)?;
     rows.into_iter().map(ChatMessage::try_from).collect()
@@ -132,7 +153,8 @@ impl ChatMessageRepository for PgChatMessageRepository {
         &self,
         channel: ChatChannel,
         limit: i64,
+        cursor: Option<MessageCursor>,
     ) -> Result<Vec<ChatMessage>, RepositoryError> {
-        list_recent_messages(&self.pool, channel, limit).await
+        list_recent_messages(&self.pool, channel, limit, cursor).await
     }
 }

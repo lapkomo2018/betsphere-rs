@@ -112,15 +112,12 @@ impl BetRepository for InMemoryBetRepository {
         self.dispatch(UserBalanceChanged {
             user_id: bet.user_id(),
         })
-            .await;
-        self.dispatch(BetPlaced {
-            bet_id: bet.id(),
-        })
-            .await;
+        .await;
+        self.dispatch(BetPlaced { bet_id: bet.id() }).await;
         self.dispatch(MarketPricesUpdated {
             market_id: bet.market_id(),
         })
-            .await;
+        .await;
         Ok(())
     }
 
@@ -281,7 +278,7 @@ mod tests {
             amount,
             f.outcomes[0].current_price(),
         )
-            .unwrap();
+        .unwrap();
         let mut priced = f.outcomes.clone();
         priced[0].add_volume(amount);
         pricing::recalculate_prices(&mut priced);

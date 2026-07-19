@@ -2,7 +2,9 @@ use std::sync::Arc;
 
 use application::ports::{AccessTokenService, MessageBroker};
 use application::use_cases::chat::{ListRecentMessages, PostMessage};
-use domain::repositories::{BetRepository, ChatMessageRepository, MarketRepository, UserRepository};
+use domain::repositories::{
+    BetRepository, ChatMessageRepository, MarketRepository, UserRepository,
+};
 
 /// State of the general WebSocket endpoint, which multiplexes every real-time
 /// stream (chat rooms, market feeds) over one socket.

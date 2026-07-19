@@ -79,7 +79,10 @@ pub trait MarketRepository: Send + Sync {
     async fn outcomes_for(&self, market_id: MarketId) -> Result<Vec<Outcome>, RepositoryError>;
 
     /// Retrieves an `Outcome` entity by its unique identifier.
-    async fn outcome_by_id(&self, outcome_id: OutcomeId) -> Result<Option<Outcome>, RepositoryError>;
+    async fn outcome_by_id(
+        &self,
+        outcome_id: OutcomeId,
+    ) -> Result<Option<Outcome>, RepositoryError>;
 
     /// Outcomes for several markets in one query, to avoid N+1 lookups when
     /// building a listing.

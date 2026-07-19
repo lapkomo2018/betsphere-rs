@@ -1,9 +1,9 @@
 use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
+use crate::DomainError;
 use crate::entities::{MarketId, OutcomeId, UserId};
 use crate::value_objects::market::Price;
-use crate::DomainError;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct BetId(Uuid);
@@ -245,7 +245,7 @@ mod tests {
             amount,
             Price::from_ten_thousandths(price_bp).unwrap(),
         )
-            .unwrap()
+        .unwrap()
     }
 
     #[test]

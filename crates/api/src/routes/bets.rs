@@ -1,12 +1,12 @@
 use application::use_cases::bet::BetView;
 use application::{Actor, ApplicationError};
+use axum::Json;
 use axum::extract::{Query, State};
 use axum::http::StatusCode;
-use axum::Json;
 use chrono::{DateTime, Utc};
+use domain::DomainError;
 use domain::entities::OutcomeId;
 use domain::repositories::{BetFilter, BetSort};
-use domain::DomainError;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 use utoipa_axum::router::OpenApiRouter;

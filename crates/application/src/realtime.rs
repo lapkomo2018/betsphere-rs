@@ -7,12 +7,10 @@
 //! payload's [`Broadcast`] impl also derives its broker channel, so a channel
 //! can never be paired with the wrong message type.
 
-mod market;
-mod chat;
 mod bet;
+mod chat;
+mod market;
 
 pub use bet::BetPlacedBroadcast;
 pub use chat::{ChatAuthor, ChatMessageBroadcast};
 pub use market::{PriceTick, PriceUpdateBroadcast};
-
-

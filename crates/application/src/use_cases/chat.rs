@@ -1,7 +1,7 @@
 mod list_recent;
 mod post_message;
 
-pub use list_recent::ListRecentMessages;
+pub use list_recent::{HistoryWindow, ListRecentMessages};
 pub use post_message::PostMessage;
 
 use domain::entities::{ChatMessage, User};

@@ -6,7 +6,9 @@ use crate::DomainError;
 /// The codebase deliberately avoids floating point for anything money-adjacent
 /// (balances are `i64` minimal units); prices follow suit. A `Price` of
 /// `10_000` means 1.0000, `5_000` means 0.5000, and `0` means 0.0000.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
+)]
 #[serde(try_from = "i32", into = "i32")]
 pub struct Price(i32);
 

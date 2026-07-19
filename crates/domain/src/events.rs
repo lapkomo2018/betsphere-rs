@@ -11,18 +11,18 @@
 //! and can never be handed another, and serde derives the storage encoding,
 //! so there is no per-event field mapping anywhere to forget or get wrong.
 
-mod user;
-mod market;
-mod chat;
 mod bet;
+mod chat;
+mod market;
+mod user;
 
 pub use bet::BetPlaced;
 pub use chat::ChatMessagePosted;
 pub use market::MarketPricesUpdated;
 pub use user::UserBalanceChanged;
 
-use serde::de::DeserializeOwned;
 use serde::Serialize;
+use serde::de::DeserializeOwned;
 
 /// A domain event. `TOPIC` is the stable string identifying the event type
 /// in storage and to subscribers; the serde bounds are how storage encodes

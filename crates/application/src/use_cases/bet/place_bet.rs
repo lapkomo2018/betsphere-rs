@@ -2,13 +2,13 @@ use std::sync::Arc;
 
 use chrono::Utc;
 
+use domain::DomainError;
 use domain::entities::{Bet, OutcomeId, PricePoint};
 use domain::repositories::{BetRepository, MarketRepository, UserRepository};
 use domain::services::pricing;
 use domain::value_objects::market::Price;
-use domain::DomainError;
 
-use super::{view_for, BetView};
+use super::{BetView, view_for};
 use crate::{Actor, ApplicationError};
 
 /// Validated inputs for placing a bet.
@@ -41,7 +41,8 @@ impl PlaceBet {
     }
 
     pub async fn execute(&self, actor: &Actor, input: NewBet) -> Result<BetView, ApplicationError> {
-        let outcome = self.markets
+        let outcome = self
+            .markets
             .outcome_by_id(input.outcome_id)
             .await?
             .ok_or_else(|| ApplicationError::NotFound(format!("outcome {}", input.outcome_id)))?;

@@ -100,7 +100,10 @@ impl MarketRepository for InMemoryMarketRepository {
             .collect())
     }
 
-    async fn outcome_by_id(&self, outcome_id: OutcomeId) -> Result<Option<Outcome>, RepositoryError> {
+    async fn outcome_by_id(
+        &self,
+        outcome_id: OutcomeId,
+    ) -> Result<Option<Outcome>, RepositoryError> {
         Ok(self
             .outcomes
             .read()
@@ -131,15 +134,15 @@ impl MarketRepository for InMemoryMarketRepository {
             .filter(|m| {
                 filter.status.is_none_or(|status| m.status() == status)
                     && filter
-                    .category
-                    .as_deref()
-                    .is_none_or(|c| m.category() == Some(c))
+                        .category
+                        .as_deref()
+                        .is_none_or(|c| m.category() == Some(c))
                     && filter.search.as_deref().is_none_or(|q| {
-                    m.title()
-                        .as_str()
-                        .to_lowercase()
-                        .contains(&q.to_lowercase())
-                })
+                        m.title()
+                            .as_str()
+                            .to_lowercase()
+                            .contains(&q.to_lowercase())
+                    })
             })
             .cloned()
             .collect();
