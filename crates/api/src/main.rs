@@ -106,7 +106,7 @@ async fn main() {
             config.auth.cookie_secure,
         ),
         users: UserState::new(users.clone(), bets.clone(), storage.clone()),
-        files: FileState::new(storage),
+        files: FileState::new(storage.clone()),
         chat: ChatState::new(chat_messages.clone(), users.clone(), markets.clone()),
         ws: WsState::new(
             chat_messages,
@@ -116,7 +116,7 @@ async fn main() {
             access_tokens,
             broker,
         ),
-        markets: MarketState::new(markets.clone(), bets.clone()),
+        markets: MarketState::new(markets.clone(), bets.clone(), storage),
         bets: BetState::new(bets, markets, users.clone()),
         internal: InternalState::new(users, config.auth.internal_api_key),
     };

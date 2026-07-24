@@ -11,7 +11,7 @@ use domain::value_objects::market::{MarketTitle, OutcomeLabel, Price};
 
 use super::map_sqlx_err;
 
-const MARKET_COLUMNS: &str = "id, title, description, category, status, resolved_outcome_id, \
+const MARKET_COLUMNS: &str = "id, title, description, category, thumbnail_url, status, resolved_outcome_id, \
      total_volume, participants_count, created_at, closes_at";
 const OUTCOME_COLUMNS: &str = "id, market_id, label, current_price, volume";
 
@@ -23,6 +23,7 @@ struct MarketRow {
     title: String,
     description: Option<String>,
     category: Option<String>,
+    thumbnail_url: Option<String>,
     status: String,
     resolved_outcome_id: Option<Uuid>,
     total_volume: i64,
@@ -43,6 +44,7 @@ impl TryFrom<MarketRow> for Market {
             MarketTitle::new(&row.title).map_err(corrupt)?,
             row.description,
             row.category,
+            row.thumbnail_url,
             row.status.parse::<MarketStatus>().map_err(corrupt)?,
             row.resolved_outcome_id.map(Into::into),
             row.total_volume,
@@ -109,14 +111,15 @@ impl TryFrom<PricePointRow> for PricePoint {
 async fn insert_market(exec: impl PgExecutor<'_>, market: &Market) -> Result<(), RepositoryError> {
     sqlx::query(
         "INSERT INTO markets
-             (id, title, description, category, status, resolved_outcome_id,
+             (id, title, description, category, thumbnail_url, status, resolved_outcome_id,
               total_volume, participants_count, created_at, closes_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)",
     )
     .bind(market.id().as_uuid())
     .bind(market.title().as_str())
     .bind(market.description())
     .bind(market.category())
+    .bind(market.thumbnail_url())
     .bind(market.status().as_str())
     .bind(market.resolved_outcome_id().map(|id| id.as_uuid()))
     .bind(market.total_volume())
@@ -313,6 +316,16 @@ impl MarketRepository for PgMarketRepository {
         sqlx::query("UPDATE markets SET status = $1, resolved_outcome_id = $2 WHERE id = $3")
             .bind(market.status().as_str())
             .bind(market.resolved_outcome_id().map(|id| id.as_uuid()))
+            .bind(market.id().as_uuid())
+            .execute(&self.pool)
+            .await
+            .map_err(map_sqlx_err)?;
+        Ok(())
+    }
+
+    async fn update_thumbnail(&self, market: &Market) -> Result<(), RepositoryError> {
+        sqlx::query("UPDATE markets SET thumbnail_url = $1 WHERE id = $2")
+            .bind(market.thumbnail_url())
             .bind(market.id().as_uuid())
             .execute(&self.pool)
             .await

@@ -1,9 +1,7 @@
-use application::ApplicationError;
 use application::use_cases::user::MAX_AVATAR_BYTES;
 use axum::Json;
 use axum::extract::{DefaultBodyLimit, Multipart, Path, Query, State};
 use chrono::{DateTime, Utc};
-use domain::DomainError;
 use domain::entities::{User, UserId};
 use domain::repositories::UserStats;
 use serde::Serialize;
@@ -14,7 +12,7 @@ use uuid::Uuid;
 
 use super::bets::{BetListQuery, BetResponse, to_responses};
 use crate::error::{ApiError, ErrorResponse};
-use crate::extract::CurrentUser;
+use crate::extract::{CurrentUser, multipart_file};
 use crate::state::{AppState, BetState, UserState};
 
 pub fn router() -> OpenApiRouter<AppState> {
@@ -195,28 +193,9 @@ async fn get_user_bets(
 async fn upload_avatar(
     State(state): State<UserState>,
     CurrentUser(claims): CurrentUser,
-    mut multipart: Multipart,
+    multipart: Multipart,
 ) -> Result<Json<PrivateUserResponse>, ApiError> {
-    let invalid =
-        |msg: String| ApiError::from(ApplicationError::from(DomainError::Validation(msg)));
-
-    let mut file = None;
-    while let Some(field) = multipart
-        .next_field()
-        .await
-        .map_err(|e| invalid(format!("invalid multipart body: {e}")))?
-    {
-        if field.name() == Some("file") {
-            let content_type = field.content_type().unwrap_or_default().to_owned();
-            let bytes = field
-                .bytes()
-                .await
-                .map_err(|e| invalid(format!("failed to read `file` field: {e}")))?;
-            file = Some((content_type, bytes));
-            break;
-        }
-    }
-    let (content_type, bytes) = file.ok_or_else(|| invalid("missing `file` field".into()))?;
+    let (content_type, bytes) = multipart_file(multipart).await?;
 
     let user = state
         .upload_avatar

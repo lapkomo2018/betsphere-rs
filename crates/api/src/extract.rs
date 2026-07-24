@@ -2,9 +2,11 @@
 
 use application::ApplicationError;
 use application::ports::AccessClaims;
-use axum::extract::{FromRef, FromRequestParts};
+use axum::body::Bytes;
+use axum::extract::{FromRef, FromRequestParts, Multipart};
 use axum::http::header::AUTHORIZATION;
 use axum::http::request::Parts;
+use domain::DomainError;
 
 use crate::error::ApiError;
 use crate::state::{AppState, InternalState};
@@ -77,6 +79,29 @@ impl FromRequestParts<AppState> for InternalAuth {
 
         Ok(Self)
     }
+}
+
+/// Pulls the `file` field out of a `multipart/form-data` upload, returning its
+/// content type and bytes. Anything malformed or missing is a 422.
+pub async fn multipart_file(mut multipart: Multipart) -> Result<(String, Bytes), ApiError> {
+    let invalid =
+        |msg: String| ApiError::from(ApplicationError::from(DomainError::Validation(msg)));
+
+    while let Some(field) = multipart
+        .next_field()
+        .await
+        .map_err(|e| invalid(format!("invalid multipart body: {e}")))?
+    {
+        if field.name() == Some("file") {
+            let content_type = field.content_type().unwrap_or_default().to_owned();
+            let bytes = field
+                .bytes()
+                .await
+                .map_err(|e| invalid(format!("failed to read `file` field: {e}")))?;
+            return Ok((content_type, bytes));
+        }
+    }
+    Err(invalid("missing `file` field".into()))
 }
 
 fn forbidden(msg: &str) -> ApiError {

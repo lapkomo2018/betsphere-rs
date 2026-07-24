@@ -20,7 +20,7 @@ pub fn router() -> OpenApiRouter<AppState> {
     path = "/{folder}/{name}",
     tag = "files",
     params(
-        ("folder" = String, Path, description = "Storage folder, e.g. `avatars`"),
+        ("folder" = String, Path, description = "Storage folder, e.g. `avatars` or `thumbnails`"),
         ("name" = String, Path, description = "File name"),
     ),
     responses(
@@ -36,7 +36,7 @@ async fn get_file(
     Ok((
         [
             (CONTENT_TYPE, file.content_type),
-            // Safe to cache: avatar URLs carry a `?v=` that changes on re-upload.
+            // Safe to cache: image URLs carry a `?v=` that changes on re-upload.
             (CACHE_CONTROL, "public, max-age=86400".to_owned()),
         ],
         file.bytes,

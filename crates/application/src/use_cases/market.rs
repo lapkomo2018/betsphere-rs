@@ -4,6 +4,7 @@ mod get_market;
 mod get_price_history;
 mod list_markets;
 mod resolve_market;
+mod upload_thumbnail;
 
 pub use create_market::{CreateMarket, NewMarket};
 pub use get_featured_market::GetFeaturedMarket;
@@ -11,6 +12,7 @@ pub use get_market::GetMarket;
 pub use get_price_history::GetPriceHistory;
 pub use list_markets::ListMarkets;
 pub use resolve_market::ResolveMarket;
+pub use upload_thumbnail::{MAX_THUMBNAIL_BYTES, UploadMarketThumbnail};
 
 use domain::entities::{Market, Outcome};
 

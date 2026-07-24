@@ -85,7 +85,7 @@ fn test_env() -> (Router, Arc<InMemoryMarketRepository>) {
             false,
         ),
         users: UserState::new(users.clone(), bets.clone(), storage.clone()),
-        files: FileState::new(storage),
+        files: FileState::new(storage.clone()),
         chat: ChatState::new(chat_messages.clone(), users.clone(), markets.clone()),
         ws: WsState::new(
             chat_messages,
@@ -95,7 +95,7 @@ fn test_env() -> (Router, Arc<InMemoryMarketRepository>) {
             access_tokens,
             broker,
         ),
-        markets: MarketState::new(markets.clone(), bets.clone()),
+        markets: MarketState::new(markets.clone(), bets.clone(), storage),
         bets: BetState::new(bets, markets.clone(), users.clone()),
         internal: InternalState::new(users, Some(INTERNAL_KEY.to_owned())),
     };
@@ -737,6 +737,117 @@ async fn creating_a_market_requires_admin() {
         .unwrap();
     let response = app.oneshot(request).await.unwrap();
     assert_eq!(response.status(), StatusCode::FORBIDDEN);
+}
+
+/// Registers a user, promotes them through the internal endpoint, and logs in
+/// again so the access token carries the `admin` role.
+async fn register_admin(app: &Router) -> String {
+    let token = register(app).await;
+    let id = me(app, &token).await["id"].as_str().unwrap().to_owned();
+    let response = patch_role(app, &id, "admin", Some(INTERNAL_KEY)).await;
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let request = Request::post("/api/auth/login")
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(
+            r#"{"email":"alice@example.com","password":"correct horse"}"#,
+        ))
+        .unwrap();
+    let response = app.clone().oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    body_json(response).await["access_token"]
+        .as_str()
+        .unwrap()
+        .to_owned()
+}
+
+async fn upload_thumbnail(
+    app: &Router,
+    token: &str,
+    market_id: uuid::Uuid,
+    content_type: &str,
+    bytes: &[u8],
+) -> axum::response::Response {
+    let (mime, body) = multipart_body(content_type, bytes);
+    let request = Request::post(format!("/api/markets/{market_id}/thumbnail"))
+        .header(header::AUTHORIZATION, format!("Bearer {token}"))
+        .header(header::CONTENT_TYPE, mime)
+        .body(Body::from(body))
+        .unwrap();
+    app.clone().oneshot(request).await.unwrap()
+}
+
+#[tokio::test]
+async fn thumbnail_upload_and_read_round_trip() {
+    let (app, markets) = test_env();
+    let (market_id, _) = seed_market(&markets).await;
+    let token = register_admin(&app).await;
+
+    let response = upload_thumbnail(&app, &token, market_id, "image/png", b"fake-png-bytes").await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let market = body_json(response).await;
+    let thumbnail_url = market["thumbnail_url"].as_str().unwrap();
+    assert!(
+        thumbnail_url.starts_with("http://localhost:8080/api/files/thumbnails/"),
+        "unexpected thumbnail_url: {thumbnail_url}"
+    );
+
+    // The URL serves the uploaded bytes back.
+    let path = thumbnail_url.strip_prefix(APP_URL).unwrap();
+    let request = Request::get(path).body(Body::empty()).unwrap();
+    let response = app.clone().oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    assert_eq!(&bytes[..], b"fake-png-bytes");
+
+    // And it persisted: the public market view carries the same URL.
+    let request = Request::get(format!("/api/markets/{market_id}"))
+        .body(Body::empty())
+        .unwrap();
+    let fetched = body_json(app.clone().oneshot(request).await.unwrap()).await;
+    assert_eq!(fetched["thumbnail_url"], thumbnail_url);
+    assert_eq!(fetched["outcomes"].as_array().unwrap().len(), 2);
+}
+
+#[tokio::test]
+async fn thumbnail_upload_requires_admin() {
+    let (app, markets) = test_env();
+    let (market_id, _) = seed_market(&markets).await;
+    let token = register(&app).await; // registers as a regular `user`
+
+    let response = upload_thumbnail(&app, &token, market_id, "image/png", b"x").await;
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn thumbnail_upload_rejects_unsupported_content_type() {
+    let (app, markets) = test_env();
+    let (market_id, _) = seed_market(&markets).await;
+    let token = register_admin(&app).await;
+
+    let response = upload_thumbnail(&app, &token, market_id, "application/pdf", b"%PDF").await;
+    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+}
+
+#[tokio::test]
+async fn thumbnail_upload_404_for_unknown_market() {
+    let app = test_app();
+    let token = register_admin(&app).await;
+
+    let response = upload_thumbnail(&app, &token, uuid::Uuid::new_v4(), "image/png", b"png").await;
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn markets_without_a_thumbnail_report_null() {
+    let (app, markets) = test_env();
+    let (market_id, _) = seed_market(&markets).await;
+
+    let request = Request::get(format!("/api/markets/{market_id}"))
+        .body(Body::empty())
+        .unwrap();
+    let market = body_json(app.oneshot(request).await.unwrap()).await;
+    assert!(market["thumbnail_url"].is_null());
 }
 
 #[tokio::test]

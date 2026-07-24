@@ -1,7 +1,7 @@
-use application::use_cases::market::{MarketView, NewMarket};
+use application::use_cases::market::{MAX_THUMBNAIL_BYTES, MarketView, NewMarket};
 use application::{Actor, ApplicationError};
 use axum::Json;
-use axum::extract::{Path, Query, State};
+use axum::extract::{DefaultBodyLimit, Multipart, Path, Query, State};
 use axum::http::StatusCode;
 use chrono::{DateTime, Utc};
 use domain::DomainError;
@@ -16,7 +16,7 @@ use uuid::Uuid;
 
 use super::bets::{BetListQuery, BetResponse, to_responses};
 use crate::error::{ApiError, ErrorResponse};
-use crate::extract::CurrentUser;
+use crate::extract::{CurrentUser, multipart_file};
 use crate::state::{AppState, BetState, MarketState};
 
 /// Hard cap on page size, matching the non-functional requirements.
@@ -31,6 +31,9 @@ pub fn router() -> OpenApiRouter<AppState> {
         .routes(routes!(get_price_history))
         .routes(routes!(get_market_bets))
         .routes(routes!(resolve_market))
+        .routes(routes!(upload_thumbnail))
+        // Room for the thumbnail plus multipart framing; other routes send JSON.
+        .layer(DefaultBodyLimit::max(MAX_THUMBNAIL_BYTES + 64 * 1024))
 }
 
 // --- Response DTOs ---
@@ -52,6 +55,7 @@ struct MarketResponse {
     title: String,
     description: Option<String>,
     category: Option<String>,
+    thumbnail_url: Option<String>,
     status: String,
     resolved_outcome_id: Option<Uuid>,
     total_volume: i64,
@@ -69,6 +73,7 @@ impl From<&MarketView> for MarketResponse {
             title: m.title().to_string(),
             description: m.description().map(str::to_owned),
             category: m.category().map(str::to_owned),
+            thumbnail_url: m.thumbnail_url().map(str::to_owned),
             status: m.status().to_string(),
             resolved_outcome_id: m.resolved_outcome_id().map(|id| id.as_uuid()),
             total_volume: m.total_volume(),
@@ -202,6 +207,15 @@ struct CreateMarketRequest {
 #[derive(Debug, Deserialize, ToSchema)]
 struct ResolveRequest {
     winning_outcome_id: Uuid,
+}
+
+/// Multipart form for the thumbnail upload, documented for Swagger.
+#[derive(ToSchema)]
+#[allow(dead_code)] // only used for the OpenAPI schema
+struct ThumbnailUploadForm {
+    /// Image file: png, jpeg, or webp, at most 2 MiB.
+    #[schema(value_type = String, format = Binary)]
+    file: String,
 }
 
 fn invalid(message: String) -> ApplicationError {
@@ -387,6 +401,40 @@ async fn resolve_market(
             &Actor::from(claims),
             MarketId::from(id),
             OutcomeId::from(body.winning_outcome_id),
+        )
+        .await?;
+    Ok(Json(MarketResponse::from(&view)))
+}
+
+#[utoipa::path(
+    post,
+    path = "/{id}/thumbnail",
+    tag = "markets",
+    security(("bearer_auth" = [])),
+    params(("id" = Uuid, Path, description = "Market id")),
+    request_body(content = ThumbnailUploadForm, content_type = "multipart/form-data"),
+    responses(
+        (status = 200, description = "Market with the new thumbnail URL", body = MarketResponse),
+        (status = 401, description = "Missing or invalid token", body = ErrorResponse),
+        (status = 403, description = "Admin role required", body = ErrorResponse),
+        (status = 404, description = "Market not found", body = ErrorResponse),
+        (status = 422, description = "Missing `file` field, unsupported image type, or file too large", body = ErrorResponse),
+    )
+)]
+async fn upload_thumbnail(
+    State(state): State<MarketState>,
+    CurrentUser(claims): CurrentUser,
+    Path(id): Path<Uuid>,
+    multipart: Multipart,
+) -> Result<Json<MarketResponse>, ApiError> {
+    let (content_type, bytes) = multipart_file(multipart).await?;
+    let view = state
+        .upload_thumbnail
+        .execute(
+            &Actor::from(claims),
+            MarketId::from(id),
+            &content_type,
+            &bytes,
         )
         .await?;
     Ok(Json(MarketResponse::from(&view)))

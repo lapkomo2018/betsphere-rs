@@ -125,6 +125,7 @@ pub struct Market {
     title: MarketTitle,
     description: Option<String>,
     category: Option<String>,
+    thumbnail_url: Option<String>,
     status: MarketStatus,
     resolved_outcome_id: Option<OutcomeId>,
     total_volume: i64,
@@ -134,8 +135,8 @@ pub struct Market {
 }
 
 impl Market {
-    /// Creates a brand-new open market. `description` and `category` are trimmed
-    /// and normalised to `None` when blank.
+    /// Creates a brand-new open market without a thumbnail. `description` and
+    /// `category` are trimmed and normalised to `None` when blank.
     pub fn new(
         title: MarketTitle,
         description: Option<String>,
@@ -147,6 +148,7 @@ impl Market {
             title,
             description: normalise_optional(description),
             category: normalise_optional(category),
+            thumbnail_url: None,
             status: MarketStatus::Open,
             resolved_outcome_id: None,
             total_volume: 0,
@@ -163,6 +165,7 @@ impl Market {
         title: MarketTitle,
         description: Option<String>,
         category: Option<String>,
+        thumbnail_url: Option<String>,
         status: MarketStatus,
         resolved_outcome_id: Option<OutcomeId>,
         total_volume: i64,
@@ -175,6 +178,7 @@ impl Market {
             title,
             description,
             category,
+            thumbnail_url,
             status,
             resolved_outcome_id,
             total_volume,
@@ -226,6 +230,14 @@ impl Market {
 
     pub fn category(&self) -> Option<&str> {
         self.category.as_deref()
+    }
+
+    pub fn thumbnail_url(&self) -> Option<&str> {
+        self.thumbnail_url.as_deref()
+    }
+
+    pub fn set_thumbnail_url(&mut self, thumbnail_url: Option<String>) {
+        self.thumbnail_url = thumbnail_url;
     }
 
     pub fn status(&self) -> MarketStatus {
@@ -347,6 +359,7 @@ mod tests {
         assert_eq!(market.status(), MarketStatus::Open);
         assert_eq!(market.description(), None); // blank collapses to None
         assert_eq!(market.category(), Some("weather"));
+        assert_eq!(market.thumbnail_url(), None);
         assert_eq!(market.total_volume(), 0);
     }
 

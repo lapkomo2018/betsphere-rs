@@ -1,7 +1,9 @@
 use std::sync::Arc;
 
+use application::ports::FileStorage;
 use application::use_cases::market::{
     CreateMarket, GetFeaturedMarket, GetMarket, GetPriceHistory, ListMarkets, ResolveMarket,
+    UploadMarketThumbnail,
 };
 use domain::repositories::{BetRepository, MarketRepository};
 
@@ -14,17 +16,23 @@ pub struct MarketState {
     pub featured: Arc<GetFeaturedMarket>,
     pub price_history: Arc<GetPriceHistory>,
     pub resolve: Arc<ResolveMarket>,
+    pub upload_thumbnail: Arc<UploadMarketThumbnail>,
 }
 
 impl MarketState {
-    pub fn new(markets: Arc<dyn MarketRepository>, bets: Arc<dyn BetRepository>) -> Self {
+    pub fn new(
+        markets: Arc<dyn MarketRepository>,
+        bets: Arc<dyn BetRepository>,
+        storage: Arc<dyn FileStorage>,
+    ) -> Self {
         Self {
             create: Arc::new(CreateMarket::new(markets.clone())),
             list: Arc::new(ListMarkets::new(markets.clone())),
             get: Arc::new(GetMarket::new(markets.clone())),
             featured: Arc::new(GetFeaturedMarket::new(markets.clone())),
             price_history: Arc::new(GetPriceHistory::new(markets.clone())),
-            resolve: Arc::new(ResolveMarket::new(markets, bets)),
+            resolve: Arc::new(ResolveMarket::new(markets.clone(), bets)),
+            upload_thumbnail: Arc::new(UploadMarketThumbnail::new(markets, storage)),
         }
     }
 }
