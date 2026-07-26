@@ -65,6 +65,7 @@ mod tests {
             crate::entities::OutcomeId::new(),
             market,
             OutcomeLabel::new("opt").unwrap(),
+            None,
             Price::ZERO,
             volume,
         )

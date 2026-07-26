@@ -3,7 +3,7 @@ use std::sync::Arc;
 use application::ports::FileStorage;
 use application::use_cases::market::{
     CreateMarket, GetFeaturedMarket, GetMarket, GetPriceHistory, ListMarkets, ResolveMarket,
-    UploadMarketThumbnail,
+    UploadMarketThumbnail, UploadOutcomeThumbnail,
 };
 use domain::repositories::{BetRepository, MarketRepository};
 
@@ -17,6 +17,7 @@ pub struct MarketState {
     pub price_history: Arc<GetPriceHistory>,
     pub resolve: Arc<ResolveMarket>,
     pub upload_thumbnail: Arc<UploadMarketThumbnail>,
+    pub upload_outcome_thumbnail: Arc<UploadOutcomeThumbnail>,
 }
 
 impl MarketState {
@@ -32,7 +33,11 @@ impl MarketState {
             featured: Arc::new(GetFeaturedMarket::new(markets.clone())),
             price_history: Arc::new(GetPriceHistory::new(markets.clone())),
             resolve: Arc::new(ResolveMarket::new(markets.clone(), bets)),
-            upload_thumbnail: Arc::new(UploadMarketThumbnail::new(markets, storage)),
+            upload_thumbnail: Arc::new(UploadMarketThumbnail::new(
+                markets.clone(),
+                storage.clone(),
+            )),
+            upload_outcome_thumbnail: Arc::new(UploadOutcomeThumbnail::new(markets, storage)),
         }
     }
 }

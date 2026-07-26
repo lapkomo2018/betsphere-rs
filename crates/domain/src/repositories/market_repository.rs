@@ -103,6 +103,9 @@ pub trait MarketRepository: Send + Sync {
     /// Persists the market's `thumbnail_url` after an image upload.
     async fn update_thumbnail(&self, market: &Market) -> Result<(), RepositoryError>;
 
+    /// Persists one outcome's `thumbnail_url` after an image upload.
+    async fn update_outcome_thumbnail(&self, outcome: &Outcome) -> Result<(), RepositoryError>;
+
     async fn price_history(
         &self,
         market_id: MarketId,

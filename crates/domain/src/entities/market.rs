@@ -272,17 +272,20 @@ pub struct Outcome {
     id: OutcomeId,
     market_id: MarketId,
     label: OutcomeLabel,
+    thumbnail_url: Option<String>,
     current_price: Price,
     volume: i64,
 }
 
 impl Outcome {
-    /// Creates a brand-new outcome with zero volume at the given starting price.
+    /// Creates a brand-new outcome with zero volume and no thumbnail, at the
+    /// given starting price.
     pub fn new(market_id: MarketId, label: OutcomeLabel, current_price: Price) -> Self {
         Self {
             id: OutcomeId::new(),
             market_id,
             label,
+            thumbnail_url: None,
             current_price,
             volume: 0,
         }
@@ -293,6 +296,7 @@ impl Outcome {
         id: OutcomeId,
         market_id: MarketId,
         label: OutcomeLabel,
+        thumbnail_url: Option<String>,
         current_price: Price,
         volume: i64,
     ) -> Self {
@@ -300,6 +304,7 @@ impl Outcome {
             id,
             market_id,
             label,
+            thumbnail_url,
             current_price,
             volume,
         }
@@ -315,6 +320,14 @@ impl Outcome {
 
     pub fn label(&self) -> &OutcomeLabel {
         &self.label
+    }
+
+    pub fn thumbnail_url(&self) -> Option<&str> {
+        self.thumbnail_url.as_deref()
+    }
+
+    pub fn set_thumbnail_url(&mut self, thumbnail_url: Option<String>) {
+        self.thumbnail_url = thumbnail_url;
     }
 
     pub fn current_price(&self) -> Price {
@@ -371,6 +384,16 @@ mod tests {
         assert_eq!(market.status(), MarketStatus::Resolved);
         assert_eq!(market.resolved_outcome_id(), Some(winner));
         assert!(market.resolve(OutcomeId::new()).is_err());
+    }
+
+    #[test]
+    fn new_outcome_starts_without_a_thumbnail() {
+        let outcome = Outcome::new(
+            MarketId::new(),
+            OutcomeLabel::new("Yes").unwrap(),
+            Price::ZERO,
+        );
+        assert_eq!(outcome.thumbnail_url(), None);
     }
 
     #[test]

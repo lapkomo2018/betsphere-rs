@@ -20,7 +20,7 @@ pub fn router() -> OpenApiRouter<AppState> {
     path = "/{folder}/{name}",
     tag = "files",
     params(
-        ("folder" = String, Path, description = "Storage folder, e.g. `avatars` or `thumbnails`"),
+        ("folder" = String, Path, description = "Storage folder, e.g. `avatars`, `thumbnails`, or `outcome-thumbnails`"),
         ("name" = String, Path, description = "File name"),
     ),
     responses(

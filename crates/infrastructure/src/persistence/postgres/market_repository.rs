@@ -13,7 +13,7 @@ use super::map_sqlx_err;
 
 const MARKET_COLUMNS: &str = "id, title, description, category, thumbnail_url, status, resolved_outcome_id, \
      total_volume, participants_count, created_at, closes_at";
-const OUTCOME_COLUMNS: &str = "id, market_id, label, current_price, volume";
+const OUTCOME_COLUMNS: &str = "id, market_id, label, thumbnail_url, current_price, volume";
 
 // --- Row types ---
 
@@ -60,6 +60,7 @@ struct OutcomeRow {
     id: Uuid,
     market_id: Uuid,
     label: String,
+    thumbnail_url: Option<String>,
     current_price: i32,
     volume: i64,
 }
@@ -75,6 +76,7 @@ impl TryFrom<OutcomeRow> for Outcome {
             row.id.into(),
             row.market_id.into(),
             OutcomeLabel::new(&row.label).map_err(corrupt)?,
+            row.thumbnail_url,
             Price::from_ten_thousandths(row.current_price).map_err(corrupt)?,
             row.volume,
         ))
@@ -137,12 +139,13 @@ async fn insert_outcome(
     outcome: &Outcome,
 ) -> Result<(), RepositoryError> {
     sqlx::query(
-        "INSERT INTO outcomes (id, market_id, label, current_price, volume)
-         VALUES ($1, $2, $3, $4, $5)",
+        "INSERT INTO outcomes (id, market_id, label, thumbnail_url, current_price, volume)
+         VALUES ($1, $2, $3, $4, $5, $6)",
     )
     .bind(outcome.id().as_uuid())
     .bind(outcome.market_id().as_uuid())
     .bind(outcome.label().as_str())
+    .bind(outcome.thumbnail_url())
     .bind(outcome.current_price().as_ten_thousandths())
     .bind(outcome.volume())
     .execute(exec)
@@ -327,6 +330,16 @@ impl MarketRepository for PgMarketRepository {
         sqlx::query("UPDATE markets SET thumbnail_url = $1 WHERE id = $2")
             .bind(market.thumbnail_url())
             .bind(market.id().as_uuid())
+            .execute(&self.pool)
+            .await
+            .map_err(map_sqlx_err)?;
+        Ok(())
+    }
+
+    async fn update_outcome_thumbnail(&self, outcome: &Outcome) -> Result<(), RepositoryError> {
+        sqlx::query("UPDATE outcomes SET thumbnail_url = $1 WHERE id = $2")
+            .bind(outcome.thumbnail_url())
+            .bind(outcome.id().as_uuid())
             .execute(&self.pool)
             .await
             .map_err(map_sqlx_err)?;

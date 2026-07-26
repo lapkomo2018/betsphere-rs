@@ -197,6 +197,16 @@ impl MarketRepository for InMemoryMarketRepository {
         Ok(())
     }
 
+    async fn update_outcome_thumbnail(&self, outcome: &Outcome) -> Result<(), RepositoryError> {
+        let mut outcomes = self.outcomes.write().await;
+        if let Some(slot) = outcomes.iter_mut().find(|o| o.id() == outcome.id()) {
+            // Only the thumbnail moves, so a stale caller copy cannot roll back
+            // a price or volume a concurrent bet has already recorded.
+            slot.set_thumbnail_url(outcome.thumbnail_url().map(str::to_owned));
+        }
+        Ok(())
+    }
+
     async fn price_history(
         &self,
         market_id: MarketId,

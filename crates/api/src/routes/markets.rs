@@ -32,6 +32,7 @@ pub fn router() -> OpenApiRouter<AppState> {
         .routes(routes!(get_market_bets))
         .routes(routes!(resolve_market))
         .routes(routes!(upload_thumbnail))
+        .routes(routes!(upload_outcome_thumbnail))
         // Room for the thumbnail plus multipart framing; other routes send JSON.
         .layer(DefaultBodyLimit::max(MAX_THUMBNAIL_BYTES + 64 * 1024))
 }
@@ -44,6 +45,7 @@ pub fn router() -> OpenApiRouter<AppState> {
 struct OutcomeResponse {
     id: Uuid,
     label: String,
+    thumbnail_url: Option<String>,
     price: f64,
     volume: i64,
 }
@@ -86,6 +88,7 @@ impl From<&MarketView> for MarketResponse {
                 .map(|o| OutcomeResponse {
                     id: o.id().as_uuid(),
                     label: o.label().to_string(),
+                    thumbnail_url: o.thumbnail_url().map(str::to_owned),
                     price: o.current_price().as_fraction(),
                     volume: o.volume(),
                 })
@@ -433,6 +436,44 @@ async fn upload_thumbnail(
         .execute(
             &Actor::from(claims),
             MarketId::from(id),
+            &content_type,
+            &bytes,
+        )
+        .await?;
+    Ok(Json(MarketResponse::from(&view)))
+}
+
+#[utoipa::path(
+    post,
+    path = "/{id}/outcomes/{outcome_id}/thumbnail",
+    tag = "markets",
+    security(("bearer_auth" = [])),
+    params(
+        ("id" = Uuid, Path, description = "Market id"),
+        ("outcome_id" = Uuid, Path, description = "Outcome id, belonging to that market"),
+    ),
+    request_body(content = ThumbnailUploadForm, content_type = "multipart/form-data"),
+    responses(
+        (status = 200, description = "Market whose outcome carries the new thumbnail URL", body = MarketResponse),
+        (status = 401, description = "Missing or invalid token", body = ErrorResponse),
+        (status = 403, description = "Admin role required", body = ErrorResponse),
+        (status = 404, description = "Market not found, or the outcome does not belong to it", body = ErrorResponse),
+        (status = 422, description = "Missing `file` field, unsupported image type, or file too large", body = ErrorResponse),
+    )
+)]
+async fn upload_outcome_thumbnail(
+    State(state): State<MarketState>,
+    CurrentUser(claims): CurrentUser,
+    Path((id, outcome_id)): Path<(Uuid, Uuid)>,
+    multipart: Multipart,
+) -> Result<Json<MarketResponse>, ApiError> {
+    let (content_type, bytes) = multipart_file(multipart).await?;
+    let view = state
+        .upload_outcome_thumbnail
+        .execute(
+            &Actor::from(claims),
+            MarketId::from(id),
+            OutcomeId::from(outcome_id),
             &content_type,
             &bytes,
         )

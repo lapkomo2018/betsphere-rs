@@ -1,5 +1,5 @@
-//! Shared handling for user-supplied images (avatars, market thumbnails):
-//! validation of the upload and storage under a deterministic key.
+//! Shared handling for user-supplied images (avatars, market and outcome
+//! thumbnails): validation of the upload and storage under a deterministic key.
 
 use chrono::Utc;
 use domain::DomainError;

@@ -848,6 +848,118 @@ async fn markets_without_a_thumbnail_report_null() {
         .unwrap();
     let market = body_json(app.oneshot(request).await.unwrap()).await;
     assert!(market["thumbnail_url"].is_null());
+    for outcome in market["outcomes"].as_array().unwrap() {
+        assert!(outcome["thumbnail_url"].is_null());
+    }
+}
+
+async fn upload_outcome_thumbnail(
+    app: &Router,
+    token: &str,
+    market_id: uuid::Uuid,
+    outcome_id: uuid::Uuid,
+    content_type: &str,
+    bytes: &[u8],
+) -> axum::response::Response {
+    let (mime, body) = multipart_body(content_type, bytes);
+    let request = Request::post(format!(
+        "/api/markets/{market_id}/outcomes/{outcome_id}/thumbnail"
+    ))
+    .header(header::AUTHORIZATION, format!("Bearer {token}"))
+    .header(header::CONTENT_TYPE, mime)
+    .body(Body::from(body))
+    .unwrap();
+    app.clone().oneshot(request).await.unwrap()
+}
+
+/// The `thumbnail_url` of the outcome with `outcome_id` in a market payload.
+fn outcome_thumbnail(market: &serde_json::Value, outcome_id: uuid::Uuid) -> serde_json::Value {
+    market["outcomes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|o| o["id"] == outcome_id.to_string())
+        .unwrap()["thumbnail_url"]
+        .clone()
+}
+
+#[tokio::test]
+async fn outcome_thumbnail_upload_and_read_round_trip() {
+    let (app, markets) = test_env();
+    let (market_id, yes_id) = seed_market(&markets).await;
+    let token = register_admin(&app).await;
+
+    let response =
+        upload_outcome_thumbnail(&app, &token, market_id, yes_id, "image/png", b"yes-png").await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let market = body_json(response).await;
+    let thumbnail_url = outcome_thumbnail(&market, yes_id);
+    let thumbnail_url = thumbnail_url.as_str().unwrap();
+    assert!(
+        thumbnail_url.starts_with(&format!(
+            "http://localhost:8080/api/files/outcome-thumbnails/{yes_id}."
+        )),
+        "unexpected thumbnail_url: {thumbnail_url}"
+    );
+    // The market's own thumbnail is untouched.
+    assert!(market["thumbnail_url"].is_null());
+
+    // The URL serves the uploaded bytes back.
+    let path = thumbnail_url.strip_prefix(APP_URL).unwrap();
+    let request = Request::get(path).body(Body::empty()).unwrap();
+    let response = app.clone().oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    assert_eq!(&bytes[..], b"yes-png");
+
+    // And it persisted, on that outcome only.
+    let request = Request::get(format!("/api/markets/{market_id}"))
+        .body(Body::empty())
+        .unwrap();
+    let fetched = body_json(app.clone().oneshot(request).await.unwrap()).await;
+    assert_eq!(outcome_thumbnail(&fetched, yes_id), thumbnail_url);
+    let others = fetched["outcomes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|o| o["id"] != yes_id.to_string());
+    for outcome in others {
+        assert!(outcome["thumbnail_url"].is_null());
+    }
+}
+
+#[tokio::test]
+async fn outcome_thumbnail_upload_requires_admin() {
+    let (app, markets) = test_env();
+    let (market_id, yes_id) = seed_market(&markets).await;
+    let token = register(&app).await; // registers as a regular `user`
+
+    let response =
+        upload_outcome_thumbnail(&app, &token, market_id, yes_id, "image/png", b"x").await;
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn outcome_thumbnail_upload_rejects_unsupported_content_type() {
+    let (app, markets) = test_env();
+    let (market_id, yes_id) = seed_market(&markets).await;
+    let token = register_admin(&app).await;
+
+    let response =
+        upload_outcome_thumbnail(&app, &token, market_id, yes_id, "application/pdf", b"%PDF").await;
+    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+}
+
+#[tokio::test]
+async fn outcome_thumbnail_upload_404_for_an_outcome_of_another_market() {
+    let (app, markets) = test_env();
+    let (market_id, _) = seed_market(&markets).await;
+    let (_, other_outcome) = seed_market(&markets).await;
+    let token = register_admin(&app).await;
+
+    let response =
+        upload_outcome_thumbnail(&app, &token, market_id, other_outcome, "image/png", b"png").await;
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
 }
 
 #[tokio::test]
