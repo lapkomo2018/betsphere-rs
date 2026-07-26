@@ -10,8 +10,9 @@ pub use place_bet::{NewBet, PlaceBet};
 
 use std::collections::{HashMap, HashSet};
 
-use domain::entities::{Bet, Market, Outcome, UserId};
-use domain::repositories::{MarketRepository, UserRepository};
+use domain::entities::{Bet, Market, Outcome, OutcomeId, UserId};
+use domain::repositories::{BetRepository, MarketRepository, UserRepository};
+use domain::value_objects::market::Price;
 
 use crate::ApplicationError;
 
@@ -22,13 +23,18 @@ pub struct BetView {
     pub username: String,
     pub market_title: String,
     pub outcome_label: String,
+    /// Stake-weighted average price across every active bet the bettor holds
+    /// on this outcome — this one included while it is still active. Once the
+    /// bet settles the position is closed, so the bet's own price is reported.
+    pub avg_price: Price,
 }
 
 /// Joins bets with their market titles, outcome labels, and usernames.
-/// Markets and outcomes are fetched in one batch each; users one by one
-/// (behind the read-through cache in production).
+/// Markets, outcomes, and position averages are fetched in one batch each;
+/// users one by one (behind the read-through cache in production).
 pub(crate) async fn enrich(
     bets: Vec<Bet>,
+    bet_repo: &dyn BetRepository,
     markets: &dyn MarketRepository,
     users: &dyn UserRepository,
 ) -> Result<Vec<BetView>, ApplicationError> {
@@ -47,6 +53,17 @@ pub(crate) async fn enrich(
         .await?
         .into_iter()
         .map(|o| (o.id(), o.label().to_string()))
+        .collect();
+
+    let position_keys: Vec<(UserId, OutcomeId)> = {
+        let unique: HashSet<_> = bets.iter().map(|b| (b.user_id(), b.outcome_id())).collect();
+        unique.into_iter().collect()
+    };
+    let avg_prices: HashMap<_, _> = bet_repo
+        .active_positions(&position_keys)
+        .await?
+        .into_iter()
+        .map(|p| ((p.user_id, p.outcome_id), p.avg_price))
         .collect();
 
     let mut usernames: HashMap<UserId, String> = HashMap::new();
@@ -70,10 +87,15 @@ pub(crate) async fn enrich(
                 .ok_or_else(|| broken_link(&format!("outcome {}", bet.outcome_id())))?
                 .clone();
             let username = usernames[&bet.user_id()].clone();
+            let avg_price = avg_prices
+                .get(&(bet.user_id(), bet.outcome_id()))
+                .copied()
+                .unwrap_or_else(|| bet.price());
             Ok(BetView {
                 market_title: market.title().to_string(),
                 outcome_label,
                 username,
+                avg_price,
                 bet,
             })
         })
@@ -86,11 +108,18 @@ fn broken_link(what: &str) -> ApplicationError {
     ApplicationError::Internal(format!("bet references missing {what}"))
 }
 
-pub(crate) fn view_for(bet: Bet, market: &Market, outcome: &Outcome, username: String) -> BetView {
+pub(crate) fn view_for(
+    bet: Bet,
+    market: &Market,
+    outcome: &Outcome,
+    username: String,
+    avg_price: Price,
+) -> BetView {
     BetView {
         market_title: market.title().to_string(),
         outcome_label: outcome.label().to_string(),
         username,
+        avg_price,
         bet,
     }
 }

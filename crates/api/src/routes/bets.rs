@@ -30,7 +30,8 @@ pub fn router() -> OpenApiRouter<AppState> {
 // --- DTOs (shared with the market/user bet listings) ---
 
 /// One bet with the display names a feed entry needs. `price` is the price
-/// fixed at placement, as a fraction in `[0.0, 1.0]`.
+/// fixed at placement and `avg_price` the bettor's whole open position on the
+/// outcome, both as fractions in `[0.0, 1.0]`.
 #[derive(Debug, Serialize, ToSchema)]
 pub(super) struct BetResponse {
     id: Uuid,
@@ -42,6 +43,9 @@ pub(super) struct BetResponse {
     outcome_label: String,
     amount: i64,
     price: f64,
+    /// Stake-weighted average price over every active bet this user holds on
+    /// this outcome. Falls back to `price` once the bet itself has settled.
+    avg_price: f64,
     status: String,
     payout: Option<i64>,
     created_at: DateTime<Utc>,
@@ -60,6 +64,7 @@ impl From<&BetView> for BetResponse {
             outcome_label: view.outcome_label.clone(),
             amount: bet.amount(),
             price: bet.price().as_fraction(),
+            avg_price: view.avg_price.as_fraction(),
             status: bet.status().to_string(),
             payout: bet.payout(),
             created_at: bet.created_at(),

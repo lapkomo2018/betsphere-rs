@@ -36,6 +36,12 @@ impl ListUserBets {
             return Err(ApplicationError::NotFound(format!("user {user_id}")));
         }
         let bets = self.bets.find_by_user(user_id, filter).await?;
-        enrich(bets, self.markets.as_ref(), self.users.as_ref()).await
+        enrich(
+            bets,
+            self.bets.as_ref(),
+            self.markets.as_ref(),
+            self.users.as_ref(),
+        )
+        .await
     }
 }

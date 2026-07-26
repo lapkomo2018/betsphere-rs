@@ -35,6 +35,12 @@ impl ListMarketBets {
             return Err(ApplicationError::NotFound(format!("market {market_id}")));
         }
         let bets = self.bets.find_by_market(market_id, filter).await?;
-        enrich(bets, self.markets.as_ref(), self.users.as_ref()).await
+        enrich(
+            bets,
+            self.bets.as_ref(),
+            self.markets.as_ref(),
+            self.users.as_ref(),
+        )
+        .await
     }
 }

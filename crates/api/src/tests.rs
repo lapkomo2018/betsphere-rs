@@ -935,6 +935,53 @@ async fn placing_a_bet_debits_balance_and_shows_in_feed() {
 }
 
 #[tokio::test]
+async fn avg_price_averages_the_bettors_open_stake_per_outcome() {
+    let (app, markets) = test_env();
+    let (market_id, yes_id) = seed_market(&markets).await;
+    let token = register(&app).await;
+
+    // "Yes" starts at 0.5000; the first stake puts every unit of volume on it,
+    // so the second buys at 1.0000.
+    let first = body_json(post_bet(&app, &token, market_id, yes_id, 1_000).await).await;
+    assert_eq!(first["price"], 0.5);
+    assert_eq!(first["avg_price"], 0.5); // alone in the position
+
+    let second = body_json(post_bet(&app, &token, market_id, yes_id, 1_000).await).await;
+    assert_eq!(second["price"], 1.0);
+    // Equal stakes at 0.5 and 1.0 average to 0.75.
+    assert_eq!(second["avg_price"], 0.75);
+
+    // Every listing row for that position reports the same average, the older
+    // bet included — it is a property of the position, not of the single bet.
+    let request = Request::get("/api/bets/feed").body(Body::empty()).unwrap();
+    let feed = body_json(app.clone().oneshot(request).await.unwrap()).await;
+    assert_eq!(feed.as_array().unwrap().len(), 2);
+    for row in feed.as_array().unwrap() {
+        assert_eq!(row["avg_price"], 0.75);
+    }
+
+    // A stake on the other outcome keeps its own average.
+    let request = Request::get(format!("/api/markets/{market_id}"))
+        .body(Body::empty())
+        .unwrap();
+    let market = body_json(app.clone().oneshot(request).await.unwrap()).await;
+    let no_id: uuid::Uuid = market["outcomes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|o| o["label"] == "No")
+        .unwrap()["id"]
+        .as_str()
+        .unwrap()
+        .parse()
+        .unwrap();
+
+    let other = body_json(post_bet(&app, &token, market_id, no_id, 1_000).await).await;
+    assert_eq!(other["avg_price"], other["price"]);
+    assert_ne!(other["avg_price"], 0.75);
+}
+
+#[tokio::test]
 async fn placing_a_bet_requires_auth() {
     let (app, markets) = test_env();
     let (market_id, yes_id) = seed_market(&markets).await;

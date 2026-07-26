@@ -3,11 +3,15 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use tokio::sync::RwLock;
 
-use domain::entities::{Bet, BetId, BetStatus, Market, MarketId, Outcome, PricePoint, UserId};
+use domain::entities::{
+    Bet, BetId, BetStatus, Market, MarketId, Outcome, OutcomeId, PricePoint, UserId,
+};
 use domain::events::{BetPlaced, Event, MarketPricesUpdated, UserBalanceChanged};
 use domain::repositories::{
-    BetFilter, BetRepository, BetSort, MarketRepository, RepositoryError, UserRepository, UserStats,
+    ActivePosition, BetFilter, BetRepository, BetSort, MarketRepository, RepositoryError,
+    UserRepository, UserStats,
 };
+use domain::value_objects::market::Price;
 
 use super::{InMemoryMarketRepository, InMemoryUserRepository};
 use crate::events::InMemoryEventBus;
@@ -213,6 +217,43 @@ impl BetRepository for InMemoryBetRepository {
         }
         Ok(stats)
     }
+
+    async fn active_positions(
+        &self,
+        pairs: &[(UserId, OutcomeId)],
+    ) -> Result<Vec<ActivePosition>, RepositoryError> {
+        let bets = self.bets.read().await;
+        let mut positions = Vec::new();
+        for &(user_id, outcome_id) in pairs {
+            // `i128` mirrors the NUMERIC accumulator the Postgres query uses,
+            // so a large book cannot overflow the weighting.
+            let (weighted, staked) = bets
+                .iter()
+                .filter(|b| {
+                    b.user_id() == user_id
+                        && b.outcome_id() == outcome_id
+                        && b.status() == BetStatus::Active
+                })
+                .fold((0i128, 0i128), |(weighted, staked), bet| {
+                    let amount = i128::from(bet.amount());
+                    (
+                        weighted + amount * i128::from(bet.price().as_ten_thousandths()),
+                        staked + amount,
+                    )
+                });
+            if staked == 0 {
+                continue;
+            }
+            let avg_price = Price::from_ten_thousandths((weighted / staked) as i32)
+                .map_err(|e| RepositoryError::Storage(format!("corrupt average price: {e}")))?;
+            positions.push(ActivePosition {
+                user_id,
+                outcome_id,
+                avg_price,
+            });
+        }
+        Ok(positions)
+    }
 }
 
 #[cfg(test)]
@@ -271,12 +312,23 @@ mod tests {
     /// Builds the placement artifacts the way `PlaceBet` does: bet at the
     /// current price, chosen outcome's volume bumped, prices recalculated.
     fn placement(f: &Fixture, amount: i64) -> (Bet, Vec<Outcome>, Vec<PricePoint>) {
+        placement_at(f, amount, f.outcomes[0].current_price())
+    }
+
+    /// Same, with the fixed price chosen explicitly — the fixture's outcomes
+    /// keep their opening price, so building a position out of bets bought at
+    /// different prices has to say so.
+    fn placement_at(
+        f: &Fixture,
+        amount: i64,
+        price: Price,
+    ) -> (Bet, Vec<Outcome>, Vec<PricePoint>) {
         let bet = Bet::place(
             f.user.id(),
             f.market.id(),
             f.outcomes[0].id(),
             amount,
-            f.outcomes[0].current_price(),
+            price,
         )
         .unwrap();
         let mut priced = f.outcomes.clone();
@@ -373,5 +425,58 @@ mod tests {
         // Another user's stats stay empty.
         let stranger = f.repo.stats_for_user(UserId::new()).await.unwrap();
         assert_eq!(stranger, UserStats::default());
+    }
+
+    #[tokio::test]
+    async fn active_positions_weight_the_average_by_stake() {
+        let f = fixture().await;
+        // 100 bought at 0.5000, then 900 at 1.0000: the bigger stake has to
+        // pull the average most of the way to its own price.
+        for (amount, price_bp) in [(100, 5_000), (900, 10_000)] {
+            let price = Price::from_ten_thousandths(price_bp).unwrap();
+            let (bet, priced, points) = placement_at(&f, amount, price);
+            f.repo.place(&bet, &priced, &points).await.unwrap();
+        }
+
+        let positions = f
+            .repo
+            .active_positions(&[(f.user.id(), f.outcomes[0].id())])
+            .await
+            .unwrap();
+        // (100 * 5_000 + 900 * 10_000) / 1_000 = 9_500.
+        assert_eq!(positions.len(), 1);
+        assert_eq!(
+            positions[0].avg_price,
+            Price::from_ten_thousandths(9_500).unwrap()
+        );
+    }
+
+    #[tokio::test]
+    async fn active_positions_skip_settled_bets_and_unknown_pairs() {
+        let f = fixture().await;
+        let (bet, priced, points) = placement(&f, 1_000);
+        f.repo.place(&bet, &priced, &points).await.unwrap();
+
+        // A pair the user never bet on has no position.
+        let untouched = f
+            .repo
+            .active_positions(&[(f.user.id(), f.outcomes[1].id())])
+            .await
+            .unwrap();
+        assert!(untouched.is_empty());
+
+        // Nor does one whose only bet has settled.
+        let mut market = f.markets.find_by_id(f.market.id()).await.unwrap().unwrap();
+        market.resolve(f.outcomes[0].id()).unwrap();
+        let mut settled = f.repo.active_for_market(f.market.id()).await.unwrap();
+        settled[0].settle_as_winner().unwrap();
+        f.repo.settle(&market, &settled).await.unwrap();
+
+        let closed = f
+            .repo
+            .active_positions(&[(f.user.id(), f.outcomes[0].id())])
+            .await
+            .unwrap();
+        assert!(closed.is_empty());
     }
 }

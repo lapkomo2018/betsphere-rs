@@ -27,6 +27,12 @@ impl ListBetFeed {
 
     pub async fn execute(&self, filter: &BetFilter) -> Result<Vec<BetView>, ApplicationError> {
         let bets = self.bets.feed(filter).await?;
-        enrich(bets, self.markets.as_ref(), self.users.as_ref()).await
+        enrich(
+            bets,
+            self.bets.as_ref(),
+            self.markets.as_ref(),
+            self.users.as_ref(),
+        )
+        .await
     }
 }

@@ -6,7 +6,7 @@ mod refresh_token_repository;
 mod unit_of_work;
 mod user_repository;
 
-pub use bet_repository::{BetFilter, BetRepository, BetSort, UserStats};
+pub use bet_repository::{ActivePosition, BetFilter, BetRepository, BetSort, UserStats};
 pub use chat_message_repository::{ChatMessageRepository, MessageAnchor, MessageCursor};
 pub use error::RepositoryError;
 pub use market_repository::{

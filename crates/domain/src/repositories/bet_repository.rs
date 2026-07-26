@@ -1,7 +1,10 @@
 use async_trait::async_trait;
 
 use super::RepositoryError;
-use crate::entities::{Bet, BetId, BetStatus, Market, MarketId, Outcome, PricePoint, UserId};
+use crate::entities::{
+    Bet, BetId, BetStatus, Market, MarketId, Outcome, OutcomeId, PricePoint, UserId,
+};
+use crate::value_objects::market::Price;
 
 /// How a bet listing is ordered.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -58,6 +61,18 @@ impl UserStats {
     }
 }
 
+/// One user's still-open stake on a single outcome, aggregated over every
+/// active bet they hold on it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ActivePosition {
+    pub user_id: UserId,
+    pub outcome_id: OutcomeId,
+    /// Stake-weighted average of the prices those bets were fixed at:
+    /// `SUM(amount * price) / SUM(amount)`, floored to a whole tick. A bigger
+    /// stake pulls the average further toward its own price.
+    pub avg_price: Price,
+}
+
 /// Port for bet persistence. Placing and settling bets move balances and
 /// market aggregates together, so implementations must make [`place`](Self::place)
 /// and [`settle`](Self::settle) atomic — partial application would corrupt
@@ -104,6 +119,15 @@ pub trait BetRepository: Send + Sync {
 
     /// Aggregated stats over every bet the user has placed.
     async fn stats_for_user(&self, user_id: UserId) -> Result<UserStats, RepositoryError>;
+
+    /// The active positions behind the given `(user, outcome)` pairs, batched
+    /// so a listing resolves every row in one round trip. Pairs the user holds
+    /// no active bet on are simply absent from the result, and the order is
+    /// unspecified — callers index by the pair.
+    async fn active_positions(
+        &self,
+        pairs: &[(UserId, OutcomeId)],
+    ) -> Result<Vec<ActivePosition>, RepositoryError>;
 }
 
 #[cfg(test)]

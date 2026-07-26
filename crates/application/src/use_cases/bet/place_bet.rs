@@ -99,11 +99,21 @@ impl PlaceBet {
 
         self.bets.place(&bet, &outcomes, &points).await?;
 
+        // Read back after the commit so the average covers the bet just
+        // placed alongside whatever the bettor already held on this outcome.
+        let avg_price = self
+            .bets
+            .active_positions(&[(actor.user_id, input.outcome_id)])
+            .await?
+            .first()
+            .map_or(bet.price(), |position| position.avg_price);
+
         Ok(view_for(
             bet,
             &market,
             &outcomes[chosen],
             user.username().to_string(),
+            avg_price,
         ))
     }
 }

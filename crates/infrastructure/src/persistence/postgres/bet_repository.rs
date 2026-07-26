@@ -3,9 +3,13 @@ use chrono::{DateTime, Utc};
 use sqlx::{PgPool, QueryBuilder};
 use uuid::Uuid;
 
-use domain::entities::{Bet, BetId, BetStatus, Market, MarketId, Outcome, PricePoint, UserId};
+use domain::entities::{
+    Bet, BetId, BetStatus, Market, MarketId, Outcome, OutcomeId, PricePoint, UserId,
+};
 use domain::events::{BetPlaced, MarketPricesUpdated, UserBalanceChanged};
-use domain::repositories::{BetFilter, BetRepository, BetSort, RepositoryError, UserStats};
+use domain::repositories::{
+    ActivePosition, BetFilter, BetRepository, BetSort, RepositoryError, UserStats,
+};
 use domain::value_objects::market::Price;
 
 use super::map_sqlx_err;
@@ -321,5 +325,50 @@ impl BetRepository for PgBetRepository {
             losses,
             total_volume,
         })
+    }
+
+    async fn active_positions(
+        &self,
+        pairs: &[(UserId, OutcomeId)],
+    ) -> Result<Vec<ActivePosition>, RepositoryError> {
+        if pairs.is_empty() {
+            return Ok(Vec::new());
+        }
+        let (user_ids, outcome_ids): (Vec<Uuid>, Vec<Uuid>) = pairs
+            .iter()
+            .map(|(user_id, outcome_id)| (user_id.as_uuid(), outcome_id.as_uuid()))
+            .unzip();
+
+        // SUM over BIGINT yields NUMERIC, which keeps the weighted mean exact
+        // before it is floored back onto the ten-thousandth grid. Both factors
+        // are positive, so flooring can never drop below the minimum tick.
+        let rows: Vec<(Uuid, Uuid, i32)> = sqlx::query_as(
+            "SELECT user_id, outcome_id,
+                    FLOOR(SUM(amount::NUMERIC * price) / SUM(amount))::INTEGER
+             FROM bets
+             WHERE status = $3
+               AND (user_id, outcome_id) IN (SELECT * FROM UNNEST($1::UUID[], $2::UUID[]))
+             GROUP BY user_id, outcome_id",
+        )
+        .bind(&user_ids)
+        .bind(&outcome_ids)
+        .bind(BetStatus::Active.as_str())
+        .fetch_all(&self.pool)
+        .await
+        .map_err(map_sqlx_err)?;
+
+        rows.into_iter()
+            .map(|(user_id, outcome_id, avg_price)| {
+                Ok(ActivePosition {
+                    user_id: user_id.into(),
+                    outcome_id: outcome_id.into(),
+                    avg_price: Price::from_ten_thousandths(avg_price).map_err(|e| {
+                        RepositoryError::Storage(format!(
+                            "corrupt average price for user {user_id} on outcome {outcome_id}: {e}"
+                        ))
+                    })?,
+                })
+            })
+            .collect()
     }
 }
