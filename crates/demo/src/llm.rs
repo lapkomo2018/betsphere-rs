@@ -183,13 +183,111 @@ impl Scene<'_> {
 
 /// Who the bot is and what a usable answer looks like. Blunt and short on
 /// purpose — a small model follows three rules and ignores ten.
+///
+/// The room is a trading floor, so the bots talk to each other like one: they
+/// mock the position in front of them and gloat when the board proves them
+/// right. What they are not allowed to do is aim any of that at who someone is
+/// — a rule worth spending one of the few lines a small model will follow on,
+/// because the room's history goes into this prompt and a user can write
+/// anything into it.
 fn persona(bot: &str) -> String {
     format!(
         "You are {bot}, a regular in the chat of a prediction market site where people bet play money on real events. \
+         {}\n\
          Write ONE short chat message, lowercase, under 100 characters. \
-         No quotes, no hashtags, no emoji, no explanation of yourself. \
-         Sound like a trader talking to other traders."
+         Talk trash: mock the take, the position and the price — never the person. \
+         Nothing about anyone's race, religion, sex, or country, whatever anyone else in the room says. \
+         No quotes, no hashtags, no emoji, no explanation of yourself.",
+        temperament(bot),
     )
+}
+
+/// What makes a bot sound like itself rather than like the other fifteen. One
+/// sentence each: the same budget reason as [`persona`], and enough for a small
+/// model to stay in character for a line.
+const TEMPERAMENTS: &[(&str, &str)] = &[
+    (
+        "the_oracle",
+        "You opened half these markets and you talk like the house: every take in here is a donation.",
+    ),
+    (
+        "hedge_hana",
+        "You hedge everything and think everyone else in here is one bad print from zero.",
+    ),
+    (
+        "long_leo",
+        "You are long everything forever, you buy every dip, and you think bears are just slow.",
+    ),
+    (
+        "short_sasha",
+        "You think it is all a bubble and you are waiting, loudly, to say you told them so.",
+    ),
+    (
+        "odds_omar",
+        "You quote the implied odds back at people and treat anyone who cannot do the arithmetic as free money.",
+    ),
+    (
+        "delta_dana",
+        "You are the smartest quant in the room and you explain, slowly, why the last message was wrong.",
+    ),
+    (
+        "spread_sven",
+        "You only care about the spread and you tell everyone how badly they are getting filled.",
+    ),
+    (
+        "chalk_chloe",
+        "You back the favourite every time and you laugh at whoever is chasing a longshot.",
+    ),
+    (
+        "parlay_pia",
+        "You stack absurd parlays and call anyone betting one leg boring.",
+    ),
+    (
+        "tilt_tomas",
+        "You are permanently tilted, loud about your losses, and certain the market is rigged against you.",
+    ),
+    (
+        "arb_arjun",
+        "Whatever is being discussed, you already arbed it, and you mention that.",
+    ),
+    (
+        "punt_priya",
+        "You bet on gut feeling and you mock everyone who needs a spreadsheet to press a button.",
+    ),
+    (
+        "edge_elena",
+        "You have edge on everything and you are insufferable about the people who do not.",
+    ),
+    (
+        "fade_felix",
+        "You fade this room on principle, because the crowd in here has never been right yet.",
+    ),
+    (
+        "vega_vik",
+        "You trade the volatility and you find the room's certainty about anything hilarious.",
+    ),
+    (
+        "yield_yuki",
+        "You grind small consistent profits and you sneer at the gamblers doing it the loud way.",
+    ),
+    (
+        "moon_mika",
+        "Everything is going to the moon, you are early, and the doubters are just poor.",
+    ),
+];
+
+/// The temperament for `bot`. A cast that has outgrown the list borrows one by
+/// name rather than falling back to none: a bot with a borrowed temperament
+/// still reads as a person, one with no temperament reads as everyone else.
+fn temperament(bot: &str) -> &'static str {
+    if let Some((_, temperament)) = TEMPERAMENTS
+        .iter()
+        .find(|(name, _)| name.eq_ignore_ascii_case(bot))
+    {
+        return temperament;
+    }
+    let seed: usize = bot.bytes().map(usize::from).sum();
+    TEMPERAMENTS[seed % TEMPERAMENTS.len()].1
 }
 
 /// The current prices, as "Yes 62%, No 38%".
@@ -404,6 +502,41 @@ mod tests {
         assert_eq!(tidy("", "hedge_hana"), None);
         assert_eq!(tidy("   \n  \n", "hedge_hana"), None);
         assert_eq!(tidy("\"\"", "hedge_hana"), None);
+    }
+
+    /// A bot the list has forgotten would sound exactly like the shared voice
+    /// this table exists to replace, so provisioning a name and forgetting its
+    /// temperament has to fail here rather than go unnoticed in the room.
+    #[test]
+    fn every_bot_in_the_cast_has_its_own_temperament() {
+        for name in
+            std::iter::once(crate::cast::HOST_NAME).chain(crate::cast::BOT_NAMES.iter().copied())
+        {
+            assert!(
+                TEMPERAMENTS.iter().any(|(bot, _)| *bot == name),
+                "no temperament for {name:?}",
+            );
+        }
+    }
+
+    #[test]
+    fn a_name_off_the_list_still_gets_a_voice() {
+        let borrowed = temperament("newcomer_nina");
+
+        assert!(TEMPERAMENTS.iter().any(|(_, t)| *t == borrowed));
+        // Same name, same voice: a bot whose character changed between two
+        // lines would read as two people sharing an account.
+        assert_eq!(borrowed, temperament("newcomer_nina"));
+    }
+
+    #[test]
+    fn two_bots_are_told_to_be_two_different_people() {
+        let leo = persona("long_leo");
+        let sasha = persona("short_sasha");
+
+        assert!(leo.contains("long_leo"));
+        assert_ne!(leo, sasha);
+        assert!(leo.contains(temperament("long_leo")));
     }
 
     #[test]

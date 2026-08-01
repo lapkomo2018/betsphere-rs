@@ -23,10 +23,10 @@ pub(crate) const EMAIL_DOMAIN: &str = "bots.betsphere.invalid";
 
 /// The market maker. The only bot with the admin role, because opening and
 /// resolving markets is an admin action.
-const HOST_NAME: &str = "the_oracle";
+pub(crate) const HOST_NAME: &str = "the_oracle";
 
 /// Everyone else, in the order they are provisioned.
-const BOT_NAMES: &[&str] = &[
+pub(crate) const BOT_NAMES: &[&str] = &[
     "hedge_hana",
     "long_leo",
     "short_sasha",
