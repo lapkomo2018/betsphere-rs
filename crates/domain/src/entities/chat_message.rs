@@ -75,17 +75,27 @@ pub struct ChatMessage {
     author_id: UserId,
     channel: ChatChannel,
     body: MessageBody,
+    /// The message this one replies to, always in the same channel. Clears
+    /// itself if that message is ever deleted: the reply survives, unquoted.
+    reply_to: Option<MessageId>,
     created_at: DateTime<Utc>,
 }
 
 impl ChatMessage {
-    /// Creates a brand-new message authored now.
-    pub fn new(author_id: UserId, channel: ChatChannel, body: MessageBody) -> Self {
+    /// Creates a brand-new message authored now. Callers are responsible for
+    /// checking that `reply_to` names a message of the same `channel`.
+    pub fn new(
+        author_id: UserId,
+        channel: ChatChannel,
+        body: MessageBody,
+        reply_to: Option<MessageId>,
+    ) -> Self {
         Self {
             id: MessageId::new(),
             author_id,
             channel,
             body,
+            reply_to,
             created_at: Utc::now(),
         }
     }
@@ -96,6 +106,7 @@ impl ChatMessage {
         author_id: UserId,
         channel: ChatChannel,
         body: MessageBody,
+        reply_to: Option<MessageId>,
         created_at: DateTime<Utc>,
     ) -> Self {
         Self {
@@ -103,6 +114,7 @@ impl ChatMessage {
             author_id,
             channel,
             body,
+            reply_to,
             created_at,
         }
     }
@@ -123,6 +135,10 @@ impl ChatMessage {
         &self.body
     }
 
+    pub fn reply_to(&self) -> Option<MessageId> {
+        self.reply_to
+    }
+
     pub fn created_at(&self) -> DateTime<Utc> {
         self.created_at
     }
@@ -135,11 +151,28 @@ mod tests {
     #[test]
     fn new_message_gets_id_and_timestamp() {
         let author = UserId::new();
-        let message =
-            ChatMessage::new(author, ChatChannel::Global, MessageBody::new("hi").unwrap());
+        let message = ChatMessage::new(
+            author,
+            ChatChannel::Global,
+            MessageBody::new("hi").unwrap(),
+            None,
+        );
         assert_eq!(message.author_id(), author);
         assert_eq!(message.channel(), ChatChannel::Global);
         assert_eq!(message.body().as_str(), "hi");
+        assert_eq!(message.reply_to(), None);
+    }
+
+    #[test]
+    fn a_reply_remembers_the_message_it_answers() {
+        let parent = MessageId::new();
+        let message = ChatMessage::new(
+            UserId::new(),
+            ChatChannel::Global,
+            MessageBody::new("agreed").unwrap(),
+            Some(parent),
+        );
+        assert_eq!(message.reply_to(), Some(parent));
     }
 
     #[test]

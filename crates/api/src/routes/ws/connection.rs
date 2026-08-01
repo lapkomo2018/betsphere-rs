@@ -80,7 +80,9 @@ async fn handle_frame(
                 return send_error(socket, &format!("already subscribed to {name}")).await;
             }
             let joined = match channel {
-                Channel::Chat(room) => subscribe::chat(socket, state, room, &name, tx).await?,
+                Channel::Chat(room) => {
+                    subscribe::chat(socket, state, user_id, room, &name, tx).await?
+                }
                 Channel::Bets(feed) => subscribe::bets(socket, state, feed, &name, tx).await?,
                 Channel::MarketFeed(market_id) => {
                     subscribe::market_feed(socket, state, market_id, &name, tx).await?
@@ -100,6 +102,7 @@ async fn handle_frame(
         ClientFrame::ChatMessage {
             channel: name,
             body,
+            reply_to,
         } => {
             let Some(channel) = channel::parse(&name) else {
                 return send_error(socket, &format!("unknown channel {name:?}")).await;
@@ -111,7 +114,26 @@ async fn handle_frame(
             // delivery to every subscriber — including this sender, who
             // thereby receives the server-assigned id and timestamp — rides
             // the outbox -> broker pipeline.
-            if let Err(e) = state.post_message.execute(user_id, room, body).await {
+            let posted = state
+                .post_message
+                .execute(user_id, room, body, reply_to.map(Into::into))
+                .await;
+            if let Err(e) = posted {
+                return send_error(socket, &e.to_string()).await;
+            }
+        }
+
+        // Both directions reach every subscriber the same way a message does:
+        // the write records an event, and the broadcaster turns it into a
+        // `reaction_update` frame carrying the resulting count.
+        ClientFrame::AddReaction { message_id, emoji } => {
+            if let Err(e) = state.react.add(user_id, message_id.into(), emoji).await {
+                return send_error(socket, &e.to_string()).await;
+            }
+        }
+
+        ClientFrame::RemoveReaction { message_id, emoji } => {
+            if let Err(e) = state.react.remove(user_id, message_id.into(), emoji).await {
                 return send_error(socket, &e.to_string()).await;
             }
         }

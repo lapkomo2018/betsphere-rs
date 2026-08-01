@@ -26,7 +26,8 @@ const MARKET_FEED_PREFIX: &str = "market:";
 /// What a client's frame says when its channel name doesn't parse.
 pub(super) const HINT: &str = "expected {\"type\": \"subscribe|unsubscribe|chat_message\", \"channel\": \
      \"global_chat\" | \"market_chat:<id>\" | \"market:<id>\" | \
-     \"market_bets:<id>\" | \"global_bets\", ...}";
+     \"market_bets:<id>\" | \"global_bets\", ...} or \
+     {\"type\": \"add_reaction|remove_reaction\", \"message_id\": \"<id>\", \"emoji\": \"👍\"}";
 
 /// A stream a client can subscribe to, parsed from its wire name.
 #[derive(Debug, Clone, Copy)]

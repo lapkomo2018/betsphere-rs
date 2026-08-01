@@ -9,14 +9,14 @@
 //! was told, but the socket is fine"; `Err(())` means the socket itself is dead.
 
 use application::realtime::{
-    BetFeed, BetPlacedBroadcast, ChatMessageBroadcast, PriceUpdateBroadcast,
+    BetFeed, BetPlacedBroadcast, ChatMessageBroadcast, ChatReactionBroadcast, PriceUpdateBroadcast,
 };
 use application::use_cases::chat::HistoryWindow;
 use axum::extract::ws::WebSocket;
 use chrono::Utc;
-use domain::entities::{Bet, ChatChannel, MarketId};
+use domain::entities::{Bet, ChatChannel, MarketId, UserId};
 use domain::repositories::{BetFilter, RepositoryError};
-use futures::StreamExt;
+use futures::{Stream, StreamExt};
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 
@@ -25,28 +25,40 @@ use application::ports::{Broadcast, MessageBrokerExt, TypedStream};
 use crate::routes::chat::ChatMessageResponse;
 use crate::state::{HISTORY_LIMIT, WsState};
 
-use super::frames::{self, BetPlacedResponse, PriceUpdateResponse, ServerFrame, send_error};
+use super::frames::{
+    self, BetPlacedResponse, PriceUpdateResponse, ReactionUpdateResponse, ServerFrame, send_error,
+};
 
 /// The outcome of a join: the forwarding task, or `None` if the client was sent
 /// an error instead.
 type Joined = Result<Option<JoinHandle<()>>, ()>;
 
 /// Joins a chat room: replays the newest page of messages, then streams live
-/// ones.
+/// ones and the reaction changes on them.
+///
+/// Messages and reactions travel on two broker channels but one wire channel,
+/// so the two streams are interleaved into the single forwarding task a
+/// subscription owns.
 pub(super) async fn chat(
     socket: &mut WebSocket,
     state: &WsState,
+    viewer: UserId,
     room: ChatChannel,
     name: &str,
     tx: &mpsc::Sender<String>,
 ) -> Joined {
-    let Some(live) = broker_stream::<ChatMessageBroadcast>(socket, state, &room).await? else {
+    let Some(messages) = broker_stream::<ChatMessageBroadcast>(socket, state, &room).await? else {
         return Ok(None);
     };
-    // Live subscribers always replay the newest page.
+    let Some(reactions) = broker_stream::<ChatReactionBroadcast>(socket, state, &room).await?
+    else {
+        return Ok(None);
+    };
+    // Live subscribers always replay the newest page, tallied for whoever is
+    // on this socket.
     let views = match state
         .list_recent
-        .execute(room, HISTORY_LIMIT, HistoryWindow::default())
+        .execute(viewer, room, HISTORY_LIMIT, HistoryWindow::default())
         .await
     {
         Ok(views) => views,
@@ -64,13 +76,18 @@ pub(super) async fn chat(
     )
     .await?;
 
-    let channel = name.to_owned();
-    Ok(Some(spawn_forwarder(live, tx.clone(), move |message| {
-        vec![ServerFrame::ChatMessage {
+    let (channel, reaction_channel) = (name.to_owned(), name.to_owned());
+    let live = futures::stream::select(
+        messages.map(move |message| ServerFrame::ChatMessage {
             channel: channel.clone(),
             data: message.into(),
-        }]
-    })))
+        }),
+        reactions.map(move |reaction| ServerFrame::ReactionUpdate {
+            channel: reaction_channel.clone(),
+            data: ReactionUpdateResponse::from(reaction),
+        }),
+    );
+    Ok(Some(spawn_forwarder(live, tx.clone(), |frame| vec![frame])))
 }
 
 /// Joins a bet feed, global or market-scoped: replays the newest page of bets,
@@ -221,14 +238,15 @@ where
     }
 }
 
-/// Spawns the task that forwards one channel's typed broker stream into the
+/// Spawns the task that forwards one subscription's live stream into the
 /// connection's write queue, expanding each message into wire frames.
-fn spawn_forwarder<M>(
-    mut live: TypedStream<M>,
+fn spawn_forwarder<S, M>(
+    mut live: S,
     tx: mpsc::Sender<String>,
     to_frames: impl Fn(M) -> Vec<ServerFrame> + Send + 'static,
 ) -> JoinHandle<()>
 where
+    S: Stream<Item = M> + Send + Unpin + 'static,
     M: Send + 'static,
 {
     tokio::spawn(async move {

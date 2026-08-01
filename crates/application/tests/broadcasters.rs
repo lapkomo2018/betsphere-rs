@@ -16,17 +16,19 @@ use std::sync::Arc;
 
 use futures::StreamExt;
 
-use application::broadcasters::{ChatMessageBroadcaster, MarketPriceUpdateBroadcaster};
-use application::ports::{EventHandler, MessageBrokerExt};
-use application::realtime::{ChatMessageBroadcast, PriceUpdateBroadcast};
-use domain::entities::{
-    ChatChannel, ChatMessage, Market, MarketId, MessageId, Outcome, OutcomeId, User,
+use application::broadcasters::{
+    ChatMessageBroadcaster, ChatReactionBroadcaster, MarketPriceUpdateBroadcaster,
 };
-use domain::events::{ChatMessagePosted, MarketPricesUpdated};
+use application::ports::{EventHandler, MessageBrokerExt};
+use application::realtime::{ChatMessageBroadcast, ChatReactionBroadcast, PriceUpdateBroadcast};
+use domain::entities::{
+    ChatChannel, ChatMessage, Market, MarketId, MessageId, Outcome, OutcomeId, User, UserId,
+};
+use domain::events::{ChatMessagePosted, ChatReactionChanged, MarketPricesUpdated};
 use domain::repositories::{
     ChatMessageRepository as _, MarketRepository as _, UserRepository as _,
 };
-use domain::value_objects::chat::MessageBody;
+use domain::value_objects::chat::{MessageBody, ReactionEmoji};
 use domain::value_objects::market::{MarketTitle, OutcomeLabel, Price};
 use domain::value_objects::user::{Email, PasswordHash, Username};
 use infrastructure::messaging::InMemoryMessageBroker;
@@ -50,6 +52,7 @@ async fn broadcasts_the_message_with_its_author() {
         author.id(),
         ChatChannel::Global,
         MessageBody::new("hello").unwrap(),
+        None,
     );
     messages.save(&message).await.unwrap();
 
@@ -70,6 +73,124 @@ async fn broadcasts_the_message_with_its_author() {
     assert_eq!(broadcast.id, message.id());
     assert_eq!(broadcast.body, "hello");
     assert_eq!(broadcast.author.username, Username::new("alice").unwrap());
+    assert!(broadcast.reply_to.is_none());
+}
+
+#[tokio::test]
+async fn broadcasts_a_reply_with_the_message_it_quotes() {
+    let messages = Arc::new(InMemoryChatMessageRepository::new());
+    let users = Arc::new(InMemoryUserRepository::new());
+    let broker = Arc::new(InMemoryMessageBroker::new());
+
+    let author = User::new(
+        Username::new("alice").unwrap(),
+        Email::new("alice@example.com").unwrap(),
+        PasswordHash::new("$argon2id$fake"),
+    );
+    users.save(&author).await.unwrap();
+    let quoted = ChatMessage::new(
+        author.id(),
+        ChatChannel::Global,
+        MessageBody::new("the original").unwrap(),
+        None,
+    );
+    let reply = ChatMessage::new(
+        author.id(),
+        ChatChannel::Global,
+        MessageBody::new("agreed").unwrap(),
+        Some(quoted.id()),
+    );
+    messages.save(&quoted).await.unwrap();
+    messages.save(&reply).await.unwrap();
+
+    let mut feed = broker
+        .subscribe_broadcast::<ChatMessageBroadcast>(&ChatChannel::Global)
+        .await
+        .unwrap();
+
+    let handler = ChatMessageBroadcaster::new(messages, users, broker.clone());
+    handler
+        .handle(&ChatMessagePosted {
+            message_id: reply.id(),
+        })
+        .await
+        .unwrap();
+
+    let broadcast = feed.next().await.unwrap();
+    let quote = broadcast.reply_to.expect("reply should carry its quote");
+    assert_eq!(quote.id, quoted.id());
+    assert_eq!(quote.body, "the original");
+    assert_eq!(quote.author.username, Username::new("alice").unwrap());
+}
+
+#[tokio::test]
+async fn broadcasts_the_reaction_tally_after_each_change() {
+    let messages = Arc::new(InMemoryChatMessageRepository::new());
+    let broker = Arc::new(InMemoryMessageBroker::new());
+
+    let author = UserId::new();
+    let message = ChatMessage::new(
+        author,
+        ChatChannel::Global,
+        MessageBody::new("nice call").unwrap(),
+        None,
+    );
+    messages.save(&message).await.unwrap();
+    let emoji = ReactionEmoji::new("🔥").unwrap();
+    let reactor = UserId::new();
+    messages
+        .add_reaction(message.id(), reactor, &emoji)
+        .await
+        .unwrap();
+
+    let mut feed = broker
+        .subscribe_broadcast::<ChatReactionBroadcast>(&ChatChannel::Global)
+        .await
+        .unwrap();
+
+    let handler = ChatReactionBroadcaster::new(messages.clone(), broker.clone());
+    let changed = |added| ChatReactionChanged {
+        message_id: message.id(),
+        user_id: reactor,
+        emoji: "🔥".to_owned(),
+        added,
+    };
+    handler.handle(&changed(true)).await.unwrap();
+
+    let broadcast = feed.next().await.unwrap();
+    assert_eq!(broadcast.message_id, message.id());
+    assert_eq!(broadcast.emoji, "🔥");
+    assert_eq!(broadcast.count, 1);
+    assert!(broadcast.added);
+
+    // The count is re-read, not stepped: once the reaction is gone the same
+    // handler publishes zero rather than decrementing what it last sent.
+    messages
+        .remove_reaction(message.id(), reactor, &emoji)
+        .await
+        .unwrap();
+    handler.handle(&changed(false)).await.unwrap();
+
+    let broadcast = feed.next().await.unwrap();
+    assert_eq!(broadcast.count, 0);
+    assert!(!broadcast.added);
+}
+
+#[tokio::test]
+async fn reaction_to_a_vanished_message_is_a_no_op() {
+    let handler = ChatReactionBroadcaster::new(
+        Arc::new(InMemoryChatMessageRepository::new()),
+        Arc::new(InMemoryMessageBroker::new()),
+    );
+    handler
+        .handle(&ChatReactionChanged {
+            message_id: MessageId::new(),
+            user_id: UserId::new(),
+            emoji: "🔥".to_owned(),
+            added: true,
+        })
+        .await
+        .unwrap();
 }
 
 #[tokio::test]

@@ -3,7 +3,8 @@
 use std::sync::Arc;
 
 use application::broadcasters::{
-    BetPlacedBroadcaster, ChatMessageBroadcaster, MarketPriceUpdateBroadcaster,
+    BetPlacedBroadcaster, ChatMessageBroadcaster, ChatReactionBroadcaster,
+    MarketPriceUpdateBroadcaster,
 };
 use axum::Router;
 use axum::body::{Body, to_bytes};
@@ -63,6 +64,10 @@ fn test_env() -> (Router, Arc<InMemoryMarketRepository>) {
         users.clone(),
         broker.clone(),
     ));
+    bus.register(ChatReactionBroadcaster::new(
+        chat_messages.clone(),
+        broker.clone(),
+    ));
     let uow = Arc::new(InMemoryUnitOfWork::new(
         users.clone(),
         refresh_tokens.clone(),
@@ -109,11 +114,16 @@ async fn body_json(response: axum::response::Response) -> serde_json::Value {
 
 /// Registers a user and returns their access token.
 async fn register(app: &Router) -> String {
+    register_as(app, "alice").await
+}
+
+/// Registers `username` (with a matching e-mail) and returns their access token.
+async fn register_as(app: &Router, username: &str) -> String {
     let request = Request::post("/api/auth/register")
         .header(header::CONTENT_TYPE, "application/json")
-        .body(Body::from(
-            r#"{"username":"alice","email":"alice@example.com","password":"correct horse"}"#,
-        ))
+        .body(Body::from(format!(
+            r#"{{"username":"{username}","email":"{username}@example.com","password":"correct horse"}}"#
+        )))
         .unwrap();
     let response = app.clone().oneshot(request).await.unwrap();
     assert_eq!(response.status(), StatusCode::CREATED);
@@ -331,6 +341,210 @@ async fn market_chat_is_scoped_to_its_market() {
     let (mut global, _) = connect_async(url).await.unwrap();
     let history = subscribe(&mut global, "global_chat").await;
     assert_eq!(history, serde_json::json!([]));
+}
+
+// --- Chat replies and reactions (WebSocket) ---
+
+/// Sends `frame` and returns the next server frame, parsed.
+async fn round_trip<S>(ws: &mut S, frame: String) -> serde_json::Value
+where
+    S: StreamExt<Item = Result<WsMessage, tokio_tungstenite::tungstenite::Error>>
+        + SinkExt<WsMessage>
+        + Unpin,
+    <S as futures::Sink<WsMessage>>::Error: std::fmt::Debug,
+{
+    ws.send(WsMessage::text(frame)).await.unwrap();
+    serde_json::from_str(&next_text(ws).await).unwrap()
+}
+
+/// Posts a message to `channel` and returns the `data` of the echo, which
+/// carries the server-assigned id.
+async fn post_message<S>(ws: &mut S, channel: &str, body: &str) -> serde_json::Value
+where
+    S: StreamExt<Item = Result<WsMessage, tokio_tungstenite::tungstenite::Error>>
+        + SinkExt<WsMessage>
+        + Unpin,
+    <S as futures::Sink<WsMessage>>::Error: std::fmt::Debug,
+{
+    let echo = round_trip(
+        ws,
+        format!(r#"{{"type":"chat_message","channel":"{channel}","body":"{body}"}}"#),
+    )
+    .await;
+    assert_eq!(echo["type"], "chat_message", "unexpected frame: {echo}");
+    echo["data"].clone()
+}
+
+#[tokio::test]
+async fn chat_ws_echoes_a_reply_with_the_message_it_quotes() {
+    let app = test_app();
+    let token = register(&app).await;
+    let addr = serve(app).await;
+
+    let (mut ws, _) = connect_async(format!("ws://{addr}/ws?token={token}"))
+        .await
+        .unwrap();
+    subscribe(&mut ws, "global_chat").await;
+
+    let quoted = post_message(&mut ws, "global_chat", "the original").await;
+    let quoted_id = quoted["id"].as_str().unwrap();
+    assert!(quoted["reply_to"].is_null());
+
+    let reply = round_trip(
+        &mut ws,
+        format!(
+            r#"{{"type":"chat_message","channel":"global_chat","body":"agreed","reply_to":"{quoted_id}"}}"#
+        ),
+    )
+    .await;
+    assert_eq!(reply["type"], "chat_message", "unexpected frame: {reply}");
+    assert_eq!(reply["data"]["body"], "agreed");
+    assert_eq!(reply["data"]["reply_to"]["id"], quoted_id);
+    assert_eq!(reply["data"]["reply_to"]["body"], "the original");
+    assert_eq!(reply["data"]["reply_to"]["author"]["username"], "alice");
+}
+
+#[tokio::test]
+async fn chat_ws_rejects_a_reply_to_a_message_in_another_room() {
+    let (app, markets) = test_env();
+    let (market_id, _) = seed_market(&markets).await;
+    let token = register(&app).await;
+    let addr = serve(app).await;
+    let url = format!("ws://{addr}/ws?token={token}");
+
+    let (mut ws, _) = connect_async(url).await.unwrap();
+    subscribe(&mut ws, "global_chat").await;
+    let global = post_message(&mut ws, "global_chat", "global only").await;
+    let global_id = global["id"].as_str().unwrap();
+
+    // Quoting across rooms would drag a global message into a market's
+    // discussion, so it is refused rather than silently dropped.
+    let error = round_trip(
+        &mut ws,
+        format!(
+            r#"{{"type":"chat_message","channel":"market_chat:{market_id}","body":"look","reply_to":"{global_id}"}}"#
+        ),
+    )
+    .await;
+    assert_eq!(error["type"], "error", "unexpected frame: {error}");
+}
+
+#[tokio::test]
+async fn chat_ws_streams_reaction_updates_to_the_room() {
+    let app = test_app();
+    let token = register(&app).await;
+    let addr = serve(app).await;
+    let url = format!("ws://{addr}/ws?token={token}");
+
+    let (mut author, _) = connect_async(url.clone()).await.unwrap();
+    subscribe(&mut author, "global_chat").await;
+    let message = post_message(&mut author, "global_chat", "nice call").await;
+    let message_id = message["id"].as_str().unwrap().to_owned();
+    assert_eq!(message["reactions"], serde_json::json!([]));
+
+    // A second client is subscribed before the reaction lands, so the update
+    // it sees can only have come over the live feed.
+    let (mut watcher, _) = connect_async(url).await.unwrap();
+    subscribe(&mut watcher, "global_chat").await;
+
+    let echo = round_trip(
+        &mut author,
+        format!(r#"{{"type":"add_reaction","message_id":"{message_id}","emoji":"🔥"}}"#),
+    )
+    .await;
+    for frame in [
+        &echo,
+        &serde_json::from_str(&next_text(&mut watcher).await).unwrap(),
+    ] {
+        assert_eq!(
+            frame["type"], "reaction_update",
+            "unexpected frame: {frame}"
+        );
+        assert_eq!(frame["channel"], "global_chat");
+        assert_eq!(frame["data"]["message_id"], message_id.as_str());
+        assert_eq!(frame["data"]["emoji"], "🔥");
+        assert_eq!(frame["data"]["count"], 1);
+        assert_eq!(frame["data"]["added"], true);
+    }
+
+    // Taking it back publishes the count as it now stands, not a delta.
+    let echo = round_trip(
+        &mut author,
+        format!(r#"{{"type":"remove_reaction","message_id":"{message_id}","emoji":"🔥"}}"#),
+    )
+    .await;
+    assert_eq!(echo["type"], "reaction_update", "unexpected frame: {echo}");
+    assert_eq!(echo["data"]["count"], 0);
+    assert_eq!(echo["data"]["added"], false);
+}
+
+#[tokio::test]
+async fn chat_ws_reacting_twice_broadcasts_once() {
+    let app = test_app();
+    let token = register(&app).await;
+    let addr = serve(app).await;
+
+    let (mut ws, _) = connect_async(format!("ws://{addr}/ws?token={token}"))
+        .await
+        .unwrap();
+    subscribe(&mut ws, "global_chat").await;
+    let message = post_message(&mut ws, "global_chat", "nice call").await;
+    let message_id = message["id"].as_str().unwrap().to_owned();
+
+    let add = format!(r#"{{"type":"add_reaction","message_id":"{message_id}","emoji":"🔥"}}"#);
+    let first = round_trip(&mut ws, add.clone()).await;
+    assert_eq!(first["type"], "reaction_update");
+
+    // The repeat changes nothing, so it must not produce a second frame — the
+    // next thing on the socket is the reaction that follows it.
+    ws.send(WsMessage::text(add)).await.unwrap();
+    let next = round_trip(
+        &mut ws,
+        format!(r#"{{"type":"add_reaction","message_id":"{message_id}","emoji":"👍"}}"#),
+    )
+    .await;
+    assert_eq!(next["type"], "reaction_update", "unexpected frame: {next}");
+    assert_eq!(next["data"]["emoji"], "👍");
+}
+
+#[tokio::test]
+async fn chat_ws_rejects_a_reaction_that_is_not_an_emoji() {
+    let app = test_app();
+    let token = register(&app).await;
+    let addr = serve(app).await;
+
+    let (mut ws, _) = connect_async(format!("ws://{addr}/ws?token={token}"))
+        .await
+        .unwrap();
+    subscribe(&mut ws, "global_chat").await;
+    let message = post_message(&mut ws, "global_chat", "nice call").await;
+    let message_id = message["id"].as_str().unwrap();
+
+    let error = round_trip(
+        &mut ws,
+        format!(r#"{{"type":"add_reaction","message_id":"{message_id}","emoji":"lgtm"}}"#),
+    )
+    .await;
+    assert_eq!(error["type"], "error", "unexpected frame: {error}");
+}
+
+#[tokio::test]
+async fn chat_ws_rejects_a_reaction_to_an_unknown_message() {
+    let app = test_app();
+    let token = register(&app).await;
+    let addr = serve(app).await;
+
+    let (mut ws, _) = connect_async(format!("ws://{addr}/ws?token={token}"))
+        .await
+        .unwrap();
+
+    let ghost = uuid::Uuid::new_v4();
+    let error = round_trip(
+        &mut ws,
+        format!(r#"{{"type":"add_reaction","message_id":"{ghost}","emoji":"🔥"}}"#),
+    )
+    .await;
+    assert_eq!(error["type"], "error", "unexpected frame: {error}");
 }
 
 #[tokio::test]
@@ -592,12 +806,7 @@ async fn seed_global_chat(url: &str, bodies: &[&str]) {
     let (mut ws, _) = connect_async(url).await.unwrap();
     subscribe(&mut ws, "global_chat").await;
     for body in bodies {
-        ws.send(WsMessage::text(format!(
-            r#"{{"type":"chat_message","channel":"global_chat","body":"{body}"}}"#
-        )))
-        .await
-        .unwrap();
-        let _ = next_text(&mut ws).await;
+        post_message(&mut ws, "global_chat", body).await;
     }
 }
 
@@ -638,6 +847,56 @@ async fn chat_history_pages_around_an_anchor_message() {
         .map(|m| m["body"].as_str().unwrap())
         .collect();
     assert_eq!(after, ["four", "five"]);
+}
+
+#[tokio::test]
+async fn chat_history_carries_replies_and_per_reader_reactions() {
+    let app = test_app();
+    let alice = register(&app).await;
+    let bob = register_as(&app, "bob").await;
+    let http = app.clone();
+    let addr = serve(app).await;
+
+    let (mut ws, _) = connect_async(format!("ws://{addr}/ws?token={alice}"))
+        .await
+        .unwrap();
+    subscribe(&mut ws, "global_chat").await;
+    let quoted = post_message(&mut ws, "global_chat", "the original").await;
+    let quoted_id = quoted["id"].as_str().unwrap().to_owned();
+    let reply = round_trip(
+        &mut ws,
+        format!(
+            r#"{{"type":"chat_message","channel":"global_chat","body":"agreed","reply_to":"{quoted_id}"}}"#
+        ),
+    )
+    .await;
+    assert_eq!(reply["type"], "chat_message", "unexpected frame: {reply}");
+    let _ = round_trip(
+        &mut ws,
+        format!(r#"{{"type":"add_reaction","message_id":"{quoted_id}","emoji":"🔥"}}"#),
+    )
+    .await;
+
+    // Alice reacted, so her copy of the page says so...
+    let hers = body_json(history(&http, &alice, "").await).await;
+    assert_eq!(hers[0]["id"], quoted_id.as_str());
+    assert_eq!(
+        hers[0]["reactions"],
+        serde_json::json!([{ "emoji": "🔥", "count": 1, "reacted": true }])
+    );
+    assert!(hers[0]["reply_to"].is_null());
+    // ...and the reply carries its quote, one level deep.
+    assert_eq!(hers[1]["body"], "agreed");
+    assert_eq!(hers[1]["reply_to"]["id"], quoted_id.as_str());
+    assert_eq!(hers[1]["reply_to"]["body"], "the original");
+    assert_eq!(hers[1]["reactions"], serde_json::json!([]));
+
+    // ...while Bob sees the same tally with the flag cleared.
+    let his = body_json(history(&http, &bob, "").await).await;
+    assert_eq!(
+        his[0]["reactions"],
+        serde_json::json!([{ "emoji": "🔥", "count": 1, "reacted": false }])
+    );
 }
 
 #[tokio::test]

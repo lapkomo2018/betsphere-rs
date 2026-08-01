@@ -11,7 +11,8 @@ mod tests;
 use std::sync::Arc;
 
 use application::broadcasters::{
-    BetPlacedBroadcaster, ChatMessageBroadcaster, MarketPriceUpdateBroadcaster,
+    BetPlacedBroadcaster, ChatMessageBroadcaster, ChatReactionBroadcaster,
+    MarketPriceUpdateBroadcaster,
 };
 use infrastructure::auth::{Argon2PasswordHasher, JwtAccessTokens};
 use infrastructure::events::{OutboxProcessor, UserCacheInvalidator};
@@ -68,8 +69,9 @@ async fn main() {
     let broker = Arc::new(RedisMessageBroker::new(redis_client, cache));
 
     // Repositories record state changes (balance moves, price moves, posted
-    // chat messages) in the outbox; the processor delivers the events to keep
-    // the user cache in sync and to broadcast to live WebSocket subscribers.
+    // chat messages, reactions) in the outbox; the processor delivers the
+    // events to keep the user cache in sync and to broadcast to live WebSocket
+    // subscribers.
     let outbox = OutboxProcessor::new(pool.clone())
         .with_handler(UserCacheInvalidator::new(users.clone()))
         .with_handler(BetPlacedBroadcaster::new(bets.clone(), broker.clone()))
@@ -80,6 +82,10 @@ async fn main() {
         .with_handler(ChatMessageBroadcaster::new(
             chat_messages.clone(),
             users.clone(),
+            broker.clone(),
+        ))
+        .with_handler(ChatReactionBroadcaster::new(
+            chat_messages.clone(),
             broker.clone(),
         ));
     tokio::spawn(outbox.run());

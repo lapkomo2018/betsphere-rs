@@ -17,7 +17,7 @@ mod market;
 mod user;
 
 pub use bet::BetPlaced;
-pub use chat::ChatMessagePosted;
+pub use chat::{ChatMessagePosted, ChatReactionChanged};
 pub use market::MarketPricesUpdated;
 pub use user::UserBalanceChanged;
 
@@ -51,6 +51,7 @@ pub(crate) mod tests {
             UserBalanceChanged::TOPIC,
             MarketPricesUpdated::TOPIC,
             ChatMessagePosted::TOPIC,
+            ChatReactionChanged::TOPIC,
             BetPlaced::TOPIC,
         ];
         let unique: std::collections::HashSet<_> = topics.iter().collect();

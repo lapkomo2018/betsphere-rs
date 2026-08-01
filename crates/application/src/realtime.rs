@@ -12,5 +12,5 @@ mod chat;
 mod market;
 
 pub use bet::{BetFeed, BetPlacedBroadcast};
-pub use chat::{ChatAuthor, ChatMessageBroadcast};
+pub use chat::{ChatAuthor, ChatMessageBroadcast, ChatReactionBroadcast, QuotedMessage};
 pub use market::{PriceTick, PriceUpdateBroadcast};

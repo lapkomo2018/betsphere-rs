@@ -1,7 +1,7 @@
 //! The JSON frames exchanged over the socket, and the two helpers that put a
 //! server frame on the wire.
 
-use application::realtime::{BetPlacedBroadcast, PriceTick};
+use application::realtime::{BetPlacedBroadcast, ChatReactionBroadcast, PriceTick};
 use axum::extract::ws::{Message, WebSocket};
 use chrono::{DateTime, Utc};
 use domain::entities::{Bet, OutcomeId};
@@ -21,7 +21,18 @@ pub(super) enum ClientFrame {
     /// Leave a channel.
     Unsubscribe { channel: String },
     /// Post a message to a chat room (subscribing first is not required).
-    ChatMessage { channel: String, body: String },
+    /// `reply_to` quotes an earlier message of the same room.
+    ChatMessage {
+        channel: String,
+        body: String,
+        #[serde(default)]
+        reply_to: Option<Uuid>,
+    },
+    /// React to a message. No channel: the message id names the room it is in,
+    /// and a client that had to restate the room could get the two out of step.
+    AddReaction { message_id: Uuid, emoji: String },
+    /// Take a reaction back. Idempotent, like its counterpart.
+    RemoveReaction { message_id: Uuid, emoji: String },
 }
 
 /// Frames the server sends.
@@ -46,6 +57,12 @@ pub(super) enum ServerFrame {
         channel: String,
         data: ChatMessageResponse,
     },
+    /// One emoji's new count on one message of a chat room this client is
+    /// subscribed to.
+    ReactionUpdate {
+        channel: String,
+        data: ReactionUpdateResponse,
+    },
     /// One outcome's new price on a market feed. A snapshot of every outcome
     /// is sent on subscribe; live frames follow as bets move the prices.
     PriceUpdate {
@@ -59,6 +76,31 @@ pub(super) enum ServerFrame {
     },
     /// A problem with the client's last frame; the connection stays open.
     Error { message: String },
+}
+
+#[derive(Debug, Serialize)]
+pub(super) struct ReactionUpdateResponse {
+    message_id: Uuid,
+    emoji: String,
+    /// The count as it now stands, not a delta, so applying the same frame
+    /// twice lands in the same place.
+    count: i64,
+    /// Who reacted, and which way. A client compares this against its own id
+    /// to keep the `reacted` flag it got with the history in step.
+    user_id: Uuid,
+    added: bool,
+}
+
+impl From<ChatReactionBroadcast> for ReactionUpdateResponse {
+    fn from(value: ChatReactionBroadcast) -> Self {
+        Self {
+            message_id: value.message_id.as_uuid(),
+            emoji: value.emoji,
+            count: value.count,
+            user_id: value.user_id.as_uuid(),
+            added: value.added,
+        }
+    }
 }
 
 #[derive(Debug, Serialize)]

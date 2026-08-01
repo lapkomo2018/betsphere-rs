@@ -9,6 +9,11 @@
 //! - `market_bets:<market uuid>` — one market's live feed of placed bets.
 //! - `global_bets` — every market's placed bets, in one cross-market feed.
 //!
+//! A chat channel is two-way: `chat_message`, `add_reaction` and
+//! `remove_reaction` frames go up, and `chat_message` and `reaction_update`
+//! frames come back down. The reaction frames name a message rather than a
+//! channel — the message id already says which room it is in.
+//!
 //! The endpoint is split along the path a frame takes: [`channel`] parses a
 //! wire name into the stream it identifies, [`frames`] is the JSON both
 //! directions speak, [`connection`] is the per-socket loop, and [`subscribe`]

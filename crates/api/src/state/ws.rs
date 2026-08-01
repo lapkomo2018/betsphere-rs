@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use application::ports::{AccessTokenService, MessageBroker};
-use application::use_cases::chat::{ListRecentMessages, PostMessage};
+use application::use_cases::chat::{ListRecentMessages, PostMessage, ReactToMessage};
 use domain::repositories::{
     BetRepository, ChatMessageRepository, MarketRepository, UserRepository,
 };
@@ -11,6 +11,7 @@ use domain::repositories::{
 #[derive(Clone)]
 pub struct WsState {
     pub post_message: Arc<PostMessage>,
+    pub react: Arc<ReactToMessage>,
     pub list_recent: Arc<ListRecentMessages>,
     /// Market lookups for feed subscriptions: the existence check and the
     /// price snapshot sent on subscribe.
@@ -42,6 +43,7 @@ impl WsState {
                 users.clone(),
                 markets.clone(),
             )),
+            react: Arc::new(ReactToMessage::new(messages.clone())),
             list_recent: Arc::new(ListRecentMessages::new(messages, users, markets.clone())),
             markets,
             bets,
