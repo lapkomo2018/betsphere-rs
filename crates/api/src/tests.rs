@@ -472,6 +472,62 @@ async fn market_bets_streams_bet_placed_after_a_bet() {
 }
 
 #[tokio::test]
+async fn global_bets_streams_bets_from_every_market() {
+    let (app, markets) = test_env();
+    let (first_market, first_yes) = seed_market(&markets).await;
+    let (second_market, second_yes) = seed_market(&markets).await;
+    let token = register(&app).await;
+    let addr = serve(app.clone()).await;
+
+    let url = format!("ws://{addr}/ws?token={token}");
+    let (mut global, _) = connect_async(url.clone()).await.unwrap();
+    let (mut per_market, _) = connect_async(url.clone()).await.unwrap();
+
+    // The empty histories prove both subscriptions are live before any bet.
+    let market_channel = format!("market_bets:{first_market}");
+    assert_eq!(
+        subscribe(&mut global, "global_bets").await,
+        serde_json::json!([])
+    );
+    assert_eq!(
+        subscribe(&mut per_market, &market_channel).await,
+        serde_json::json!([])
+    );
+
+    // The second market is bet on first, so a bet leaking across markets would
+    // show up as the wrong first frame on the per-market feed below.
+    for (market_id, outcome_id) in [(second_market, second_yes), (first_market, first_yes)] {
+        let response = post_bet(&app, &token, market_id, outcome_id, 1_000).await;
+        assert_eq!(response.status(), StatusCode::CREATED);
+    }
+
+    // The cross-market feed carries both, each tagged with its market.
+    let mut seen = Vec::new();
+    for _ in 0..2 {
+        let value: serde_json::Value = serde_json::from_str(&next_text(&mut global).await).unwrap();
+        assert_eq!(value["type"], "bet_placed", "unexpected frame: {value}");
+        assert_eq!(value["channel"], "global_bets");
+        assert_eq!(value["data"]["amount"], 1_000);
+        seen.push(value["data"]["market_id"].as_str().unwrap().to_owned());
+    }
+    assert_eq!(seen, [second_market.to_string(), first_market.to_string()]);
+
+    // One market's feed still carries only its own bets.
+    let value: serde_json::Value = serde_json::from_str(&next_text(&mut per_market).await).unwrap();
+    assert_eq!(value["type"], "bet_placed", "unexpected frame: {value}");
+    assert_eq!(value["channel"], market_channel.as_str());
+    assert_eq!(value["data"]["market_id"], first_market.to_string());
+    assert_eq!(value["data"]["outcome_id"], first_yes.to_string());
+
+    // A freshly subscribing client replays both bets, oldest first.
+    let (mut late, _) = connect_async(url).await.unwrap();
+    let history = subscribe(&mut late, "global_bets").await;
+    assert_eq!(history.as_array().unwrap().len(), 2);
+    assert_eq!(history[0]["market_id"], second_market.to_string());
+    assert_eq!(history[1]["market_id"], first_market.to_string());
+}
+
+#[tokio::test]
 async fn market_feed_rejects_unknown_market() {
     let app = test_app();
     let token = register(&app).await;

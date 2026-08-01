@@ -3,11 +3,12 @@ use std::sync::Arc;
 use async_trait::async_trait;
 
 use crate::ports::{EventHandler, MessageBroker, MessageBrokerExt};
-use crate::realtime::BetPlacedBroadcast;
+use crate::realtime::{BetFeed, BetPlacedBroadcast};
 use domain::events::BetPlaced;
 use domain::repositories::BetRepository;
 
-/// Fans a newly placed bet out to live WebSocket subscribers.
+/// Fans a newly placed bet out to live WebSocket subscribers, on both its
+/// market's feed and the cross-market one.
 pub struct BetPlacedBroadcaster {
     bets: Arc<dyn BetRepository>,
     broker: Arc<dyn MessageBroker>,
@@ -37,14 +38,20 @@ impl EventHandler<BetPlaced> for BetPlacedBroadcaster {
         let broadcast = BetPlacedBroadcast {
             id: bet_id,
             user_id: bet.user_id(),
+            market_id: bet.market_id(),
             outcome_id: bet.outcome_id(),
             amount: bet.amount(),
             price: bet.price(),
             created_at: bet.created_at(),
         };
-        self.broker
-            .broadcast(&bet.market_id(), &broadcast)
-            .await
-            .map_err(|e| format!("could not broadcast bet {}: {e}", event.bet_id))
+        // The market feed first: a subscriber watching one market should not
+        // learn of its bets later than the global ticker does.
+        for feed in [BetFeed::Market(bet.market_id()), BetFeed::Global] {
+            self.broker
+                .broadcast(&feed, &broadcast)
+                .await
+                .map_err(|e| format!("could not broadcast bet {bet_id}: {e}"))?;
+        }
+        Ok(())
     }
 }
