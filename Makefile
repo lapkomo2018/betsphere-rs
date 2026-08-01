@@ -27,6 +27,10 @@ dev: db-up run ## Start the dev database, then run the API natively
 demo: db-up ## Start the dev database, then run the API with the activity bots on
 	DEMO_MODE=true cargo run
 
+.PHONY: demo-llm
+demo-llm: db-up llm-up ## Same, with a local model writing the bots' chat
+	DEMO_MODE=true DEMO_LLM_URL=http://localhost:11434/v1/chat/completions cargo run
+
 .PHONY: test
 test: ## Run all workspace tests
 	cargo test
@@ -56,13 +60,28 @@ db-down: ## Stop the dev database
 	$(COMPOSE) down
 
 .PHONY: db-reset
-db-reset: ## Stop the dev database and wipe its data, then start fresh
+db-reset: ## Stop the dev database and wipe its data (and any downloaded models), then start fresh
 	$(COMPOSE) down -v
 	$(COMPOSE) up -d
 
 .PHONY: db-logs
 db-logs: ## Tail dev database logs
 	$(COMPOSE) logs -f postgres
+
+# --- Local model (Docker, optional) ---
+
+.PHONY: llm-up
+llm-up: ## Start the model server and download DEMO_LLM_MODEL (first run takes a while)
+	$(COMPOSE) --profile llm up -d ollama
+	$(COMPOSE) --profile llm run --rm ollama-pull
+
+.PHONY: llm-down
+llm-down: ## Stop the model server (downloaded models survive in the volume)
+	$(COMPOSE) --profile llm stop ollama
+
+.PHONY: llm-logs
+llm-logs: ## Tail model server logs
+	$(COMPOSE) --profile llm logs -f ollama
 
 # --- Prod stack (Docker) ---
 

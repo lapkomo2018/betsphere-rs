@@ -67,7 +67,9 @@ the `_sqlx_migrations` table and never re-run.
 
 Dev runs only the infrastructure (Postgres + Redis) in Docker
 (`docker-compose.yml`) while the app runs natively for the fastest feedback
-loop. Prod (`make prod-up`, `docker-compose.prod.yml`) runs the full stack:
+loop. A local model server for [demo mode](#demo-mode) sits in the same file
+behind the `llm` profile, so it is opt-in rather than something every
+`make db-up` starts. Prod (`make prod-up`, `docker-compose.prod.yml`) runs the full stack:
 the API is compiled as a release binary in a multi-stage image (`Dockerfile`),
 the database and cache publish no host ports, and all services restart
 automatically.
@@ -162,6 +164,49 @@ inside — and the market maker (`the_oracle`) has the admin role, which is
 exactly why this must never be pointed at a real database.
 
 Cadences and cast size are configurable; see the demo section of `.env.example`.
+
+### Letting a local model do the talking
+
+Canned chat lines repeat after a while. Point `DEMO_LLM_URL` at a local model
+server and the bots compose their own messages, replies and reactions instead.
+
+The dev compose file ships one, behind the `llm` profile so it starts only when
+asked for:
+
+```sh
+make demo-llm    # dev database + model server + the API with the bots on
+```
+
+That is `make llm-up` (start `ollama`, download `DEMO_LLM_MODEL` into a volume —
+the first run fetches a few hundred MB) followed by the API with
+`DEMO_LLM_URL` pointed at `localhost:11434`. The full stack runs it too:
+
+```sh
+docker compose -f docker-compose.prod.yml --profile llm up -d --build
+```
+
+There the API reaches the server by service name; compose rewrites whatever
+`DEMO_LLM_URL` holds to the in-network URL, so any non-empty value means "on".
+
+The model is whatever `DEMO_LLM_MODEL` names, as an
+[Ollama library](https://ollama.com/library) tag — `qwen2.5:0.5b` (~0.4 GB) by
+default, `gemma3:270m` if that is still too much, `llama3.2:1b` for better
+banter. Nothing ties this to Ollama: any server speaking the OpenAI
+chat-completions shape works, so llama.cpp's `llama-server` or LM Studio on the
+host do just as well — set `DEMO_LLM_URL` to their endpoint and skip the
+profile. The URL must be `http://`, since this is meant for a server on the
+same machine and the client is built without TLS.
+
+Each bot is prompted with the room it is standing in — the market, its current
+prices, and the last few messages — so the talk follows the board and answers
+whoever spoke last, real users included.
+
+A 0.5B model is wrong a lot, which is fine here: the answer is stripped of
+reasoning blocks, quotes and self-narration, cut to a word boundary, and
+validated by the same value objects a user's message is. Anything left
+unusable — as well as a server that is down, slow, or answering nonsense —
+falls back to a canned line, so the demo never stalls or goes quiet waiting on
+a model.
 
 ## Adding a feature
 

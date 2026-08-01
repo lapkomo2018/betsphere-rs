@@ -7,6 +7,12 @@
 //!
 //! Replies and reactions read the room's recent history first, which means the
 //! bots answer real users as readily as they answer each other.
+//!
+//! With a local model configured (see [`llm`](crate::llm)) that history and
+//! the board go to it and the bots compose what they say. Without one — or
+//! whenever the model is unreachable, slow, or produces something a chat room
+//! cannot use — the same turn falls back to the pools in
+//! [`content`](crate::content), so the two paths are interchangeable.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -25,6 +31,7 @@ use rand::{RngExt, SeedableRng};
 
 use crate::cast::{Bot, Cast};
 use crate::content::{GLOBAL_LINES, MARKET_LINES, REACTIONS, REPLY_LINES};
+use crate::llm::{Llm, Scene};
 use crate::{open_markets, sleep_around};
 
 /// How much recent history a bot reads before deciding what to do with it.
@@ -49,6 +56,8 @@ pub(crate) struct Chatter {
     history: ListRecentMessages,
     cast: Arc<Cast>,
     interval: Duration,
+    /// The model writing the chat, when one is configured.
+    llm: Option<Arc<Llm>>,
 }
 
 impl Chatter {
@@ -58,6 +67,7 @@ impl Chatter {
         users: Arc<dyn UserRepository>,
         cast: Arc<Cast>,
         interval: Duration,
+        llm: Option<Arc<Llm>>,
     ) -> Self {
         Self {
             list: ListMarkets::new(markets.clone()),
@@ -66,6 +76,7 @@ impl Chatter {
             history: ListRecentMessages::new(messages, users, markets),
             cast,
             interval,
+            llm,
         }
     }
 
@@ -108,9 +119,14 @@ impl Chatter {
             .filter(|_| rng.random_bool(REPLY_CHANCE))
             .and_then(|target| target.choose(rng).copied());
 
+        let scene = Scene {
+            bot: bot.name,
+            market: room.as_ref(),
+            recent: &recent,
+        };
         let body = match reply_to {
-            Some(_) => pick(REPLY_LINES, rng).to_owned(),
-            None => self.line(room.as_ref(), rng),
+            Some(target) => self.reply(&scene, target, rng).await,
+            None => self.line(&scene, rng).await,
         };
 
         self.post
@@ -137,13 +153,21 @@ impl Chatter {
         let Some(target) = recent.choose(rng) else {
             return Ok(());
         };
-        let emoji = pick(REACTIONS, rng);
+        let emoji = match &self.llm {
+            Some(llm) => llm.reaction(target).await,
+            None => None,
+        }
+        .unwrap_or_else(|| pick(REACTIONS, rng).to_owned());
         let message = target.message.id();
 
         if rng.random_bool(UNREACT_CHANCE) {
-            self.react.remove(bot.actor.user_id, message, emoji).await?;
+            self.react
+                .remove(bot.actor.user_id, message, emoji.clone())
+                .await?;
         } else {
-            self.react.add(bot.actor.user_id, message, emoji).await?;
+            self.react
+                .add(bot.actor.user_id, message, emoji.clone())
+                .await?;
         }
 
         tracing::debug!(bot = bot.name, emoji, "demo reaction");
@@ -169,9 +193,32 @@ impl Chatter {
         Ok(Some(markets.swap_remove(index)))
     }
 
-    /// A line to open with. In a market room it is usually about the market,
+    /// A line to open with: the model's, if there is one and what it wrote is
+    /// postable, otherwise one from the pools.
+    async fn line(&self, scene: &Scene<'_>, rng: &mut StdRng) -> String {
+        if let Some(llm) = &self.llm
+            && let Some(line) = llm.line(scene).await
+        {
+            return line;
+        }
+        self.canned_line(scene.market, rng)
+    }
+
+    /// An answer to `target`, from the model or from the pools. The canned
+    /// replies are deliberately generic — they have to fit under any message —
+    /// which is exactly what a model improves on.
+    async fn reply(&self, scene: &Scene<'_>, target: &ChatMessageView, rng: &mut StdRng) -> String {
+        if let Some(llm) = &self.llm
+            && let Some(reply) = llm.reply(scene, target).await
+        {
+            return reply;
+        }
+        pick(REPLY_LINES, rng).to_owned()
+    }
+
+    /// A line from the pools. In a market room it is usually about the market,
     /// with the placeholders filled in from a real outcome and its price.
-    fn line(&self, room: Option<&MarketView>, rng: &mut StdRng) -> String {
+    fn canned_line(&self, room: Option<&MarketView>, rng: &mut StdRng) -> String {
         let Some(view) = room.filter(|_| rng.random_bool(ON_TOPIC_CHANCE)) else {
             return pick(GLOBAL_LINES, rng).to_owned();
         };

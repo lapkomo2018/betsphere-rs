@@ -27,6 +27,46 @@ services:
       retries: 10
     restart: unless-stopped
 
+  # Local model server writing the demo bots' chat, in-network only. Behind
+  # the `llm` profile, so it starts only when asked for:
+  #   docker compose -f docker-compose.prod.yml --profile llm up -d --build
+  # Unpinned on purpose: the container holds no state — the models live in the
+  # volume — and support for new ones lands in new releases.
+  ollama:
+    image: ollama/ollama:latest
+    profiles: ["llm"]
+    volumes:
+      - ollama_models:/root/.ollama
+    healthcheck:
+      # The CLI talks to the server it ships next to, so this answers only
+      # once that server is actually listening.
+      test: ["CMD", "ollama", "list"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+    # On an NVIDIA GPU (needs the NVIDIA Container Toolkit on the host),
+    # uncomment for a large speedup.
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
+
+  # One-shot: downloads the model the bots will ask for, then exits.
+  ollama-pull:
+    image: ollama/ollama:latest
+    profiles: ["llm"]
+    entrypoint: ["/bin/ollama", "pull", "${DEMO_LLM_MODEL:-qwen2.5:0.5b}"]
+    environment:
+      OLLAMA_HOST: ollama:11434
+    depends_on:
+      ollama:
+        condition: service_healthy
+    restart: "no"
+
   api:
     build:
       context: .
@@ -41,6 +81,11 @@ services:
       REDIS_HOST: redis
       REDIS_PORT: "6379" # in-network port, regardless of published REDIS_PORT
       STORAGE_ROOT: /data/storage # pre-created in the image, backed by the volume below
+      # Whatever DEMO_LLM_URL points at on the host, in here the model server
+      # is a service name. Empty when the var is unset, which keeps the demo
+      # bots on their canned lines — the api never waits on this service, so
+      # running without the `llm` profile is a supported state, not a failure.
+      DEMO_LLM_URL: ${DEMO_LLM_URL:+http://ollama:11434/v1/chat/completions}
     ports:
       - "${API_PORT}:8080"
     volumes:
@@ -56,3 +101,4 @@ services:
 volumes:
   postgres_data:
   storage_data:
+  ollama_models:

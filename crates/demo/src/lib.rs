@@ -17,6 +17,7 @@ mod cast;
 mod chatter;
 mod config;
 mod content;
+mod llm;
 mod market_maker;
 
 use std::sync::Arc;
@@ -33,10 +34,11 @@ use domain::repositories::{
 use rand::RngExt;
 use rand::rngs::StdRng;
 
-pub use config::DemoConfig;
+pub use config::{DemoConfig, LlmConfig};
 
 use crate::bettor::Bettor;
 use crate::chatter::Chatter;
+use crate::llm::Llm;
 use crate::market_maker::MarketMaker;
 
 /// How many open markets the bots consider at a time. Well past the number the
@@ -113,12 +115,33 @@ impl Simulation {
             self.users,
             cast,
             self.config.chat_every,
+            self.config.llm.as_ref().and_then(connect_model),
         );
 
         // Three loops on one task: they are IO-bound and deliberately slow, so
         // interleaving them costs nothing and keeps the demo to a single
         // spawned future.
         tokio::join!(maker.run(), bettor.run(), chatter.run());
+    }
+}
+
+/// Builds the client for the configured model server. Nothing is sent yet, so
+/// this says only that the client could be built — an unreachable server shows
+/// up later, one skipped line at a time.
+fn connect_model(config: &LlmConfig) -> Option<Arc<Llm>> {
+    match Llm::new(config) {
+        Ok(llm) => {
+            tracing::info!(
+                model = config.model,
+                url = config.url,
+                "demo chatter is writing with a local model",
+            );
+            Some(Arc::new(llm))
+        }
+        Err(e) => {
+            tracing::warn!("demo chatter falling back to canned lines: {e}");
+            None
+        }
     }
 }
 
@@ -207,13 +230,16 @@ mod tests {
             )
         }
 
-        fn chatter(&self) -> Chatter {
+        /// `None` is the canned path — which is also where every model failure
+        /// lands, so it is the one that has to work.
+        fn chatter(&self, llm: Option<Arc<Llm>>) -> Chatter {
             Chatter::new(
                 self.markets.clone(),
                 self.messages.clone(),
                 self.users.clone(),
                 self.cast.clone(),
                 Duration::ZERO,
+                llm,
             )
         }
 
@@ -328,12 +354,62 @@ mod tests {
         world.maker().tick(&mut rng).await.unwrap();
 
         let before = world.transcript().await.len() as i64 + world.reactions().await;
-        let chatter = world.chatter();
+        let chatter = world.chatter(None);
         for _ in 0..8 {
             chatter.tick(&mut rng).await.unwrap();
         }
 
         let after = world.transcript().await.len() as i64 + world.reactions().await;
         assert!(after > before, "8 turns changed nothing");
+    }
+
+    /// The line a model answers with has to survive tidying, validation and
+    /// the post use case to land in the room as that bot's message.
+    #[tokio::test]
+    async fn a_models_line_reaches_the_room() {
+        const LINE: &str = "yes at 62% is free money";
+        const ANSWER: &str = r#"{"choices":[{"message":{"content":"yes at 62% is free money"}}]}"#;
+
+        let world = World::new().await;
+        let mut rng = StdRng::try_from_rng(&mut SysRng).unwrap();
+        world.maker().tick(&mut rng).await.unwrap();
+        let announcement = world.transcript().await.len();
+
+        let llm = Llm::new(&LlmConfig {
+            url: llm::stub_server(ANSWER).await,
+            model: "stub".to_owned(),
+            timeout: Duration::from_secs(5),
+        })
+        .unwrap();
+        let chatter = world.chatter(Some(Arc::new(llm)));
+
+        // A turn can spend itself on a reaction, which posts nothing. Keep
+        // taking turns until one is a message; 30 without a single one is not
+        // a run of bad luck, it is a broken chatter.
+        for _ in 0..30 {
+            chatter.tick(&mut rng).await.unwrap();
+            if world.transcript().await.len() > announcement {
+                break;
+            }
+        }
+
+        let said: Vec<String> = world
+            .transcript()
+            .await
+            .iter()
+            .map(|message| message.body().as_str().to_owned())
+            .collect();
+
+        assert!(
+            said.iter().any(|body| body == LINE),
+            "the model's line never reached the room: {said:?}",
+        );
+        // Nothing but the maker's announcement should be canned while the
+        // model is answering every request.
+        assert!(
+            said.iter()
+                .all(|body| body == LINE || body.starts_with("new market open:")),
+            "a canned line slipped in: {said:?}",
+        );
     }
 }
