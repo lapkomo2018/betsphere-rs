@@ -1,6 +1,7 @@
 mod auth;
 mod cors;
 mod database;
+mod demo;
 mod env;
 mod error;
 mod redis;
@@ -10,6 +11,7 @@ mod storage;
 pub use auth::AuthConfig;
 pub use cors::CorsConfig;
 pub use database::DatabaseConfig;
+pub use demo::DemoModeConfig;
 pub use error::ConfigError;
 pub use redis::RedisConfig;
 pub use server::ServerConfig;
@@ -24,6 +26,7 @@ pub struct Config {
     pub auth: AuthConfig,
     pub cors: CorsConfig,
     pub storage: StorageConfig,
+    pub demo: DemoModeConfig,
 }
 
 impl Config {
@@ -38,6 +41,7 @@ impl Config {
             auth: AuthConfig::from_env()?,
             cors: CorsConfig::from_env()?,
             storage: StorageConfig::from_env()?,
+            demo: DemoModeConfig::from_env()?,
         })
     }
 }

@@ -23,6 +23,10 @@ crates/
 │   ├── messaging/        # Broker: Redis Pub/Sub, in-memory
 │   ├── auth/             # Argon2 hashing, JWT access tokens
 │   └── storage/          # File storage
+├── demo/             # Driving adapter: bot accounts that simulate activity
+│   ├── cast.rs           # The bot accounts, provisioned idempotently
+│   ├── content.rs        # Market templates, chat lines, reactions
+│   └── {market_maker,bettor,chatter}.rs  # One activity loop each
 └── api/              # Delivery mechanism (axum) + composition root
     ├── main.rs           # Wires repositories into use cases, starts server
     ├── config.rs         # Typed env configuration (loads .env via dotenvy)
@@ -36,7 +40,7 @@ crates/
     └── error.rs          # ApplicationError → HTTP status mapping
 ```
 
-Dependency rule: `api → application → domain` and `infrastructure → domain`. The domain crate depends on nothing but std-adjacent utility crates.
+Dependency rule: `api → application → domain` and `infrastructure → domain`. The domain crate depends on nothing but std-adjacent utility crates. `demo` is a second driving adapter alongside `api`, on the same `→ application → domain` path.
 
 Each layer is swappable at the composition root: `main.rs` builds the Postgres,
 Redis and Redis-broker adapters, while the API's own tests build the same router
@@ -138,6 +142,26 @@ Keeping fan-out in the broker is what makes the API stateless: no messages are
 buffered in any one process, so instances can be scaled out, restarted or
 load-balanced freely. Because delivery is at-least-once, handlers are idempotent
 and payloads carry absolute state rather than deltas.
+
+## Demo mode
+
+`DEMO_MODE=true` (or `make demo`) starts a simulation of a busy platform: a cast
+of bot accounts where one opens and settles markets and the rest bet, chat,
+reply and react, on their own jittered schedules.
+
+The bots are not a fixture — they are users. They call the same use cases the
+HTTP handlers call, so their stakes move real prices, their payouts move real
+balances, and everything they do travels the outbox → broker → WebSocket path
+described above and arrives at a connected client as ordinary live traffic.
+That also makes the simulation a decent smoke test of the whole write path.
+
+Accounts live under `@bots.betsphere.invalid` and are created once, then reused:
+restarting the server continues the demo rather than restarting it. They all
+share `DEMO_BOT_PASSWORD`, so you can log in as one to see the platform from the
+inside — and the market maker (`the_oracle`) has the admin role, which is
+exactly why this must never be pointed at a real database.
+
+Cadences and cast size are configurable; see the demo section of `.env.example`.
 
 ## Adding a feature
 

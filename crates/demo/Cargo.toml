@@ -1,0 +1,20 @@
+[package]
+name = "demo"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+domain = { workspace = true }
+application = { workspace = true }
+
+chrono = { workspace = true }
+rand = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+
+# Test-only: a round of the simulation is driven against the in-memory
+# repositories and the real password hasher rather than a hand-written double,
+# so the tests exercise the same repository contracts production runs on.
+# Not a cycle — infrastructure knows nothing about this crate.
+[dev-dependencies]
+infrastructure = { workspace = true }

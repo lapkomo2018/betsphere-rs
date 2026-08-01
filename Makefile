@@ -23,6 +23,10 @@ run: ## Run the API natively (expects the dev database, see db-up)
 .PHONY: dev
 dev: db-up run ## Start the dev database, then run the API natively
 
+.PHONY: demo
+demo: db-up ## Start the dev database, then run the API with the activity bots on
+	DEMO_MODE=true cargo run
+
 .PHONY: test
 test: ## Run all workspace tests
 	cargo test

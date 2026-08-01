@@ -14,6 +14,7 @@ use application::broadcasters::{
     BetPlacedBroadcaster, ChatMessageBroadcaster, ChatReactionBroadcaster,
     MarketPriceUpdateBroadcaster,
 };
+use demo::Simulation;
 use infrastructure::auth::{Argon2PasswordHasher, JwtAccessTokens};
 use infrastructure::events::{OutboxProcessor, UserCacheInvalidator};
 use infrastructure::messaging::RedisMessageBroker;
@@ -100,6 +101,20 @@ async fn main() {
         config.storage.root.clone(),
         format!("{}{}", config.server.app_url, routes::FILES_PUBLIC_BASE),
     ));
+
+    // Bot accounts driving the same use cases the API does, so a demo
+    // deployment has markets, bets and chatter to look at. Off by default.
+    if config.demo.enabled {
+        let simulation = Simulation::new(
+            users.clone(),
+            markets.clone(),
+            bets.clone(),
+            chat_messages.clone(),
+            hasher.clone(),
+            config.demo.simulation,
+        );
+        tokio::spawn(simulation.run());
+    }
 
     let state = AppState {
         auth: AuthState::new(
