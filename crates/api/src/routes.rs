@@ -5,6 +5,7 @@ mod files;
 mod health;
 mod internal;
 mod markets;
+mod tests_page;
 mod users;
 mod ws;
 
@@ -54,6 +55,7 @@ impl Modify for SecurityAddon {
 pub fn router(state: AppState) -> Router {
     let (router, openapi) = OpenApiRouter::with_openapi(ApiDoc::openapi())
         .merge(health::router())
+        .merge(tests_page::router())
         .merge(ws::router())
         .nest("/api/auth", auth::router())
         .nest("/api/users", users::router())
