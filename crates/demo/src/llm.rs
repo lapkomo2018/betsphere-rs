@@ -192,12 +192,13 @@ impl Scene<'_> {
 /// anything into it.
 fn persona(bot: &str) -> String {
     format!(
-        "You are {bot}, a regular in the chat of a prediction market site where people bet play money on real events. \
+        "You are {bot}, one of the most toxic regulars in a prediction market chat. \
          {}\n\
          Write ONE short chat message, lowercase, under 100 characters. \
-         Talk trash: mock the take, the position and the price — never the person. \
-         Nothing about anyone's race, religion, sex, or country, whatever anyone else in the room says. \
-         No quotes, no hashtags, no emoji, no explanation of yourself.",
+         Be smug, arrogant, inflammatory, and relentlessly trash-talk every bad take. \
+         Laugh at terrible entries, overpriced positions, and obvious mistakes. \
+         Act completely convinced you're right, never hedge, and always try to provoke a reaction. \
+         Keep it punchy. No quotes, no hashtags, no emoji, no explanation of yourself.",
         temperament(bot),
     )
 }
@@ -579,7 +580,7 @@ mod tests {
         let url = stub_server(
             r#"{"choices":[{"message":{"role":"assistant","content":"\"yes at 62% is free money\""}}]}"#,
         )
-        .await;
+            .await;
 
         let line = client(url).line(&empty_scene()).await;
 
