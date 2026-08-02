@@ -11,7 +11,7 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      test: [ "CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}" ]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -21,7 +21,7 @@ services:
     image: redis:8-alpine
     # No published port: the cache is reachable only from the compose network.
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: [ "CMD", "redis-cli", "ping" ]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -34,32 +34,32 @@ services:
   # volume — and support for new ones lands in new releases.
   ollama:
     image: ollama/ollama:latest
-    profiles: ["llm"]
+    profiles: [ "llm" ]
     volumes:
       - ollama_models:/root/.ollama
     healthcheck:
       # The CLI talks to the server it ships next to, so this answers only
       # once that server is actually listening.
-      test: ["CMD", "ollama", "list"]
+      test: [ "CMD", "ollama", "list" ]
       interval: 5s
       timeout: 5s
       retries: 20
     restart: unless-stopped
     # On an NVIDIA GPU (needs the NVIDIA Container Toolkit on the host),
     # uncomment for a large speedup.
-    # deploy:
-    #   resources:
-    #     reservations:
-    #       devices:
-    #         - driver: nvidia
-    #           count: all
-    #           capabilities: [gpu]
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [ gpu ]
 
   # One-shot: downloads the model the bots will ask for, then exits.
   ollama-pull:
     image: ollama/ollama:latest
-    profiles: ["llm"]
-    entrypoint: ["/bin/ollama", "pull", "${DEMO_LLM_MODEL:-qwen2.5:0.5b}"]
+    profiles: [ "llm" ]
+    entrypoint: [ "/bin/ollama", "pull", "${DEMO_LLM_MODEL:-qwen2.5:0.5b}" ]
     environment:
       OLLAMA_HOST: ollama:11434
     depends_on:
