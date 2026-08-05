@@ -6,7 +6,7 @@ use axum::http::StatusCode;
 use chrono::{DateTime, Utc};
 use domain::DomainError;
 use domain::entities::OutcomeId;
-use domain::repositories::{BetFilter, BetSort};
+use domain::repositories::{BetFilter, BetSort, BetStatusFilter};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 use utoipa_axum::router::OpenApiRouter;
@@ -94,13 +94,13 @@ impl BetListQuery {
                 return Err(DomainError::Validation(format!("unknown sort: {other}")).into());
             }
         };
-        let status = self
-            .status
-            .as_deref()
-            .filter(|s| !s.is_empty())
-            .map(str::parse)
-            .transpose()
-            .map_err(ApplicationError::from)?;
+        // `settled` is the history view's filter: every bet whose market has
+        // resolved, whichever way it went.
+        let status = match self.status.as_deref().filter(|s| !s.is_empty()) {
+            None => BetStatusFilter::Any,
+            Some("settled") => BetStatusFilter::Settled,
+            Some(other) => BetStatusFilter::Is(other.parse().map_err(ApplicationError::from)?),
+        };
 
         let limit = self.limit.unwrap_or(DEFAULT_LIMIT).clamp(1, MAX_LIMIT);
         let page = self.page.unwrap_or(1).max(1);
@@ -161,7 +161,7 @@ async fn place_bet(
     tag = "bets",
     params(
         ("sort" = Option<String>, Query, description = "newest | popular (biggest stakes)"),
-        ("status" = Option<String>, Query, description = "active | won | lost | refunded"),
+        ("status" = Option<String>, Query, description = "active | won | lost | refunded | settled (everything but active)"),
         ("page" = Option<i64>, Query, description = "1-based page number"),
         ("limit" = Option<i64>, Query, description = "Page size (max 100, default 20)"),
     ),

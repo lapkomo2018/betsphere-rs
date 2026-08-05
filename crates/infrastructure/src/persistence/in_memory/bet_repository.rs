@@ -61,7 +61,7 @@ impl InMemoryBetRepository {
             .await
             .iter()
             .filter(|b| keep(b))
-            .filter(|b| filter.status.is_none_or(|status| b.status() == status))
+            .filter(|b| filter.status.matches(b.status()))
             .cloned()
             .collect();
 

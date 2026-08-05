@@ -16,11 +16,34 @@ pub enum BetSort {
     Popular,
 }
 
+/// Which bets a listing keeps.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum BetStatusFilter {
+    /// Every bet, active or settled.
+    #[default]
+    Any,
+    /// Exactly one status.
+    Is(BetStatus),
+    /// Everything whose market has resolved: won, lost, or refunded. What a
+    /// history view wants — a refund is still something that happened.
+    Settled,
+}
+
+impl BetStatusFilter {
+    pub fn matches(self, status: BetStatus) -> bool {
+        match self {
+            Self::Any => true,
+            Self::Is(wanted) => status == wanted,
+            Self::Settled => status != BetStatus::Active,
+        }
+    }
+}
+
 /// Filters, ordering, and pagination for a bet listing. Built by the API
 /// layer from the query string; `limit` is expected to be clamped by the caller.
 #[derive(Debug, Clone)]
 pub struct BetFilter {
-    pub status: Option<BetStatus>,
+    pub status: BetStatusFilter,
     pub sort: BetSort,
     pub limit: i64,
     pub offset: i64,
@@ -29,7 +52,7 @@ pub struct BetFilter {
 impl Default for BetFilter {
     fn default() -> Self {
         Self {
-            status: None,
+            status: BetStatusFilter::default(),
             sort: BetSort::default(),
             limit: 20,
             offset: 0,
@@ -148,5 +171,33 @@ mod tests {
     #[test]
     fn win_rate_is_zero_with_no_settled_bets() {
         assert_eq!(UserStats::default().win_rate(), 0.0);
+    }
+
+    #[test]
+    fn any_keeps_every_status() {
+        for status in [
+            BetStatus::Active,
+            BetStatus::Won,
+            BetStatus::Lost,
+            BetStatus::Refunded,
+        ] {
+            assert!(BetStatusFilter::Any.matches(status));
+        }
+    }
+
+    #[test]
+    fn settled_keeps_everything_but_active() {
+        assert!(!BetStatusFilter::Settled.matches(BetStatus::Active));
+        for status in [BetStatus::Won, BetStatus::Lost, BetStatus::Refunded] {
+            assert!(BetStatusFilter::Settled.matches(status));
+        }
+    }
+
+    #[test]
+    fn is_keeps_only_that_status() {
+        let filter = BetStatusFilter::Is(BetStatus::Won);
+        assert!(filter.matches(BetStatus::Won));
+        assert!(!filter.matches(BetStatus::Lost));
+        assert!(!filter.matches(BetStatus::Active));
     }
 }

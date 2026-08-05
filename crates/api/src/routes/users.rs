@@ -158,7 +158,7 @@ async fn get_user(
     params(
         ("id" = Uuid, Path, description = "User id"),
         ("sort" = Option<String>, Query, description = "newest | popular (biggest stakes)"),
-        ("status" = Option<String>, Query, description = "active | won | lost | refunded"),
+        ("status" = Option<String>, Query, description = "active | won | lost | refunded | settled (everything but active)"),
         ("page" = Option<i64>, Query, description = "1-based page number"),
         ("limit" = Option<i64>, Query, description = "Page size (max 100, default 20)"),
     ),

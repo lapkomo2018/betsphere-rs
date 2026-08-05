@@ -8,7 +8,7 @@ use domain::entities::{
 };
 use domain::events::{BetPlaced, MarketPricesUpdated, UserBalanceChanged};
 use domain::repositories::{
-    ActivePosition, BetFilter, BetRepository, BetSort, RepositoryError, UserStats,
+    ActivePosition, BetFilter, BetRepository, BetSort, BetStatusFilter, RepositoryError, UserStats,
 };
 use domain::value_objects::market::Price;
 
@@ -82,8 +82,15 @@ impl PgBetRepository {
         if let Some((column, id)) = condition {
             qb.push(format!(" AND {column} = ")).push_bind(id);
         }
-        if let Some(status) = filter.status {
-            qb.push(" AND status = ").push_bind(status.as_str());
+        match filter.status {
+            BetStatusFilter::Any => {}
+            BetStatusFilter::Is(status) => {
+                qb.push(" AND status = ").push_bind(status.as_str());
+            }
+            BetStatusFilter::Settled => {
+                qb.push(" AND status <> ")
+                    .push_bind(BetStatus::Active.as_str());
+            }
         }
         qb.push(order_by(filter.sort));
         qb.push(" LIMIT ").push_bind(filter.limit);
